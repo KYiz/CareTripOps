@@ -1,0 +1,46 @@
+flowchart TD
+  ENTRY[Open CareTrip Ops Web Console] --> DASH[Dashboard - case list and case status]
+  DASH --> SELECT{Select existing case or create new?}
+  SELECT -->|New case| FORM[Case Intake - text request and explicit demo date]
+  FORM --> CREATE[Submit POST /api/cases]
+  CREATE --> CASE[Case Workspace - same persisted Case ID]
+  SELECT -->|Existing case| CASE
+
+  subgraph WORKSPACE[Case Workspace - tabs and panels]
+    CASE --> OVERVIEW[Overview - requirements and case state]
+    CASE --> AGENTS[Agent Activity - persisted timeline and checkpoints]
+    CASE --> OFFERS[Offer Comparison - synthetic candidate snapshots]
+    CASE --> EVIDENCE[Evidence - source records and assessments]
+    CASE --> APPROVAL[Approval Status - pending or decided]
+    CASE --> ORDERS[Mock Order - read-back status]
+    CASE --> AUDIT[Audit Events - persisted decisions and errors]
+  end
+
+  OVERVIEW --> NEEDS{Clarification requested?}
+  NEEDS -->|Yes| CLARIFY[Answer missing fields via REST clarification]
+  CLARIFY --> REFRESH[Refresh persisted state]
+  NEEDS -->|No| REFRESH
+  AGENTS --> REFRESH
+  OFFERS --> EVIDENCE
+  EVIDENCE --> VERIFIED{Verified offer available?}
+  VERIFIED -->|No| EXCEPTION[Human review or blocked state - no invented offer]
+  VERIFIED -->|Yes| PENDING[Show verified offer and pending approval]
+  PENDING --> PHONE[Open linked phone-sized view - same Case ID]
+  PHONE --> REFRESH
+  APPROVAL --> REFRESH
+  ORDERS --> REFRESH
+  AUDIT --> REFRESH
+  EXCEPTION --> REFRESH
+  REFRESH --> CASE
+
+  NOTE[Web MVP: one React SPA; typed REST client; poll persisted state every 1-2 seconds]
+  NOTE -.-> CASE
+  LIMIT[No real bookings, live supplier inventory, RBAC, or unsupported admin controls]
+  LIMIT -.-> DASH
+
+  classDef page fill:#eaf2ff,stroke:#3779cb,color:#17375b
+  classDef action fill:#eaf8f0,stroke:#28875c,color:#154a32
+  classDef caution fill:#fff2e6,stroke:#d58935,color:#70430b
+  class ENTRY,DASH,FORM,CASE,OVERVIEW,AGENTS,OFFERS,EVIDENCE,APPROVAL,ORDERS,AUDIT,PHONE page
+  class CREATE,CLARIFY,REFRESH action
+  class EXCEPTION,NOTE,LIMIT caution

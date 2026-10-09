@@ -1,0 +1,90 @@
+erDiagram
+  CASES ||--o| REQUIREMENTS : has
+  CASES ||--o{ OFFERS : snapshots
+  OFFERS ||--o{ EVIDENCE : source_records
+  OFFERS ||--o{ OFFER_ASSESSMENTS : assessments
+  CASES ||--o{ APPROVALS : requests
+  OFFERS ||--o{ APPROVALS : proposed_for
+  CASES ||--o{ ORDERS : creates
+  APPROVALS ||--o{ ORDERS : authorizes
+  OFFERS ||--o{ ORDERS : booked_as
+  CASES ||--o{ AUDIT_EVENTS : events
+  CASES {
+    uuid id PK
+    varchar thread_id UK
+    text original_request
+    varchar status
+    int state_version
+    timestamp created_at
+  }
+  REQUIREMENTS {
+    uuid id PK
+    uuid case_id FK,UK
+    varchar destination
+    date departure_date
+    int traveler_count
+    decimal budget
+    varchar currency
+    jsonb hard_constraints
+  }
+  OFFERS {
+    uuid id PK
+    uuid case_id FK
+    varchar catalog_product_id
+    int version
+    decimal total_amount
+    varchar currency
+    jsonb includes
+    jsonb supplier_claims
+    timestamp expires_at
+  }
+  EVIDENCE {
+    uuid id PK
+    uuid offer_id FK
+    varchar claim_type
+    varchar polarity
+    varchar source_strength
+    varchar source_reference
+    timestamp source_time
+  }
+  OFFER_ASSESSMENTS {
+    uuid id PK
+    uuid offer_id FK
+    varchar claim_type
+    varchar verdict
+    varchar reason_code
+    int assessment_version
+    jsonb source_refs
+  }
+  APPROVALS {
+    uuid id PK
+    uuid case_id FK
+    uuid offer_id FK
+    int offer_version
+    decimal approved_amount
+    varchar currency
+    int case_state_version
+    varchar nonce_hash
+    varchar status
+    timestamp created_at
+    timestamp decided_at
+  }
+  ORDERS {
+    uuid id PK
+    uuid case_id FK
+    uuid offer_id FK
+    uuid approval_id FK
+    varchar idempotency_key UK
+    varchar status
+    decimal total_amount
+    varchar currency
+  }
+  AUDIT_EVENTS {
+    bigint id PK
+    uuid case_id FK
+    varchar agent_name
+    varchar event_type
+    varchar status
+    jsonb payload
+    timestamp created_at
+  }

@@ -1,0 +1,40 @@
+flowchart TD
+  DESK[Desktop: submit text request and explicit demo date] --> API[POST /api/cases]
+  API --> REQ[W1 extract requirements]
+  REQ --> COMPLETE{Required fields complete?}
+  COMPLETE -->|No| CAP{Clarification count below limit?}
+  CAP -->|No| HUMAN[HUMAN_REVIEW plus persisted audit]
+  CAP -->|Yes| Q[Persist clarification request]
+  Q --> WAIT_Q[Graph interrupt: wait for REST clarification]
+  WAIT_Q -->|POST /clarifications and resume| REQ
+  COMPLETE -->|Yes| CAT[Create immutable synthetic package offer snapshots]
+  CAT --> AVAILABLE{Any eligible preliminary offers?}
+  AVAILABLE -->|No| HUMAN
+  AVAILABLE -->|Yes| CMP[W3 deterministic preliminary ranking]
+  CMP --> EVD[W2 evaluate evidence for candidate]
+  EVD --> MGR[Manager arbitration and audit]
+  MGR --> SAFE{All required claims PASS?}
+  SAFE -->|No| RETRY{Alternative and rerank budget available?}
+  RETRY -->|No| HUMAN
+  RETRY -->|Yes| EXCLUDE[Persist exclusion and rerank event]
+  EXCLUDE --> NEXT[W3 choose next candidate]
+  NEXT --> EVD
+  SAFE -->|Yes| FINAL[Publish verified final offer to both browser views]
+  FINAL --> PREP[Prepare idempotent PENDING approval in PostgreSQL]
+  PREP --> WAIT[Graph interrupt: await customer decision, no side effects]
+  WAIT -.-> PHONE[Phone simulator: show offer, price, version and SIMULATION ONLY]
+  PHONE -->|Approve or reject via POST decision| APIS[FastAPI: validate nonce and snapshot; commit decision]
+  APIS -->|Command resume same thread ID| WAIT
+  WAIT --> DECISION{Read durable PostgreSQL approval status}
+  DECISION -->|REJECTED| REJECT[REJECTED plus audit; both views refresh]
+  DECISION -->|Invalid or stale| HUMAN
+  DECISION -->|APPROVED| BOOK[W4 idempotent mock order; read-back]
+  BOOK --> CONFIRM{Committed order exists and matches approval?}
+  CONFIRM -->|No| HUMAN
+  CONFIRM -->|Yes| REVIEW[W5 summary and audit]
+  REVIEW --> DONE[Case DEMO_COMPLETED]
+  DONE --> BOTH[Dashboard and phone simulator display same backend-confirmed result]
+  API -.-> PG[(PostgreSQL business tables)]
+  MGR -.-> PG
+  BOOK -.-> PG
+  REQ -.-> CP[(AsyncPostgresSaver checkpoint tables)]

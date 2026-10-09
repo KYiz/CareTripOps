@@ -1,0 +1,77 @@
+:root {
+  --cream: #f7f3eb;
+  --ink: #173a43;
+  --teal: #237b79;
+  --sea: #dcece7;
+  --orange: #b77b42;
+  --muted: #526b68;
+  --line: #d9e4df;
+}
+
+body { background: var(--cream); }
+.app-shell { max-width: 1720px; }
+.topbar { border-bottom-color: #d4e1dc; }
+.hero-heading { min-height: 290px; position: relative; border-radius: 25px; overflow: hidden; margin: 28px 0 30px; padding: 48px; align-items: center; box-shadow: 0 18px 36px #193b4420; }
+.hero-heading .travel-photo { position: absolute; inset: 0; border-radius: inherit; }
+.hero-heading .travel-photo::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #0b303bd9 0%, #12424ac4 42%, #12424a25 100%); }
+.hero-heading .travel-photo img { width: 100%; height: 100%; object-fit: cover; }
+.hero-heading .travel-photo figcaption { position: absolute; right: 18px; bottom: 14px; z-index: 1; color: white; text-align: right; font-size: 11px; }
+.hero-heading .travel-photo figcaption small { display: block; font-size: 10px; }
+.hero-copy, .hero-heading .case-token { position: relative; z-index: 1; }
+.hero-copy { max-width: 630px; }
+.hero-heading .eyebrow, .hero-heading h1, .hero-heading .hero-copy > p:last-child { color: white; }
+.hero-heading h1 { font-size: clamp(34px, 3vw, 49px); line-height: 1.08; }
+.hero-heading .hero-copy > p:last-child { font-size: 16px; max-width: 530px; line-height: 1.5; }
+.travel-photo { position: relative; margin: 0; overflow: hidden; background: linear-gradient(135deg, #d6e7e2, #b5d0ce); }
+.travel-photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.travel-photo.is-loading img { opacity: 0; }
+.travel-photo.is-loaded img { opacity: 1; transition: opacity .25s ease; }
+.travel-photo figcaption { background: #173a43bf; color: #fff; padding: 5px 9px; border-radius: 8px; font-size: 12px; }
+.travel-photo figcaption small { font-size: 10px; margin-left: 6px; opacity: .95; }
+.travel-photo figcaption a { color: inherit; text-decoration: underline; }
+.photo-unavailable { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink); font-size: 14px; }
+.attraction-strip { display: flex; gap: 10px; margin-top: 16px; }
+.attraction-strip .travel-photo { height: 110px; flex: 1; border-radius: 12px; }
+.attraction-strip figcaption { position: absolute; bottom: 6px; left: 6px; right: 6px; }
+.attraction-strip figcaption small { display: block; margin: 2px 0 0; }
+.travel-preferences { margin-top: 15px; display: flex; gap: 12px; align-items: center; color: var(--ink); font-size: 14px; flex-wrap: wrap; }
+.travel-preferences strong { background: var(--sea); border-radius: 999px; padding: 7px 12px; }
+.scope-message { margin-top: 18px; border-radius: 12px; background: #fff0de; color: #7a451d; padding: 15px; font-size: 15px; line-height: 1.4; }
+.offer-card { padding: 0 0 16px; overflow: hidden; }
+.offer-card > .travel-photo { height: 125px; margin-bottom: 14px; }
+.offer-card > .travel-photo figcaption { position: absolute; left: 7px; right: 7px; bottom: 7px; font-size: 11px; }
+.offer-card > .travel-photo figcaption small { display: block; margin: 2px 0 0; }
+.offer-card > :not(.travel-photo) { margin-left: 16px; margin-right: 16px; }
+.offer-card .offer-price { margin-top: 12px; margin-bottom: 8px; }
+.phone-screen { background: #faf9f5; }
+.phone-content { padding: 12px 21px 18px; }
+.phone-content h2 { font-size: 29px; line-height: 1.13; margin-bottom: 15px; }
+.phone-content h2 em { font-size: 23px; font-style: normal; }
+.phone-hero-photo { height: 185px; border-radius: 14px; margin-bottom: 15px; }
+.phone-hero-photo figcaption { position: absolute; bottom: 7px; left: 7px; right: 7px; font-size: 12px; }
+.phone-hero-photo figcaption small { display: block; margin: 2px 0 0; }
+.phone-case-id { font-size: 13px; }
+.phone-case-id span { font-size: 12px; }
+.phone-empty { font-size: 16px; margin-top: 18px; padding: 18px 14px; }
+.phone-empty strong { font-size: 18px; }
+.phone-empty p { margin: 8px 0 0; }
+.mobile-plan { margin-top: 16px; }
+.plan-body h3 { font-size: 23px; }
+.plan-description, .plan-includes { font-size: 16px; line-height: 1.5; }
+.plan-includes { gap: 8px; }
+.plan-cost strong { font-size: 24px; }
+.approval-actions p, .phone-notice, .phone-warning, .phone-success { font-size: 16px; line-height: 1.5; }
+.approval-actions button { min-height: 52px; font-size: 17px; }
+.phone-footer { font-size: 9px; }
+@media (max-width: 800px) {
+  .hero-heading { min-height: 270px; padding: 28px; }
+  .hero-heading .travel-photo figcaption { display: none; }
+  .hero-heading h1 { font-size: 35px; }
+}
+@media (max-width: 520px) {
+  .hero-heading { padding: 23px; min-height: 260px; }
+  .hero-heading h1 { font-size: 31px; }
+  .hero-heading .hero-copy > p:last-child { font-size: 14px; }
+  .attraction-strip { flex-direction: column; }
+  .attraction-strip .travel-photo { flex: none; }
+}

@@ -1,0 +1,25 @@
+flowchart LR
+  subgraph PAGE[One React SPA - two presentation views]
+    DASH[Desktop dashboard: CaseForm, AgentTimeline, EvidencePanel, OfferComparison]
+    MOBILE[Browser phone frame: VerifiedPlan, ApprovalActions, BookingResult]
+    CLIENT[One typed API client and shared selected Case ID]
+    DASH --> CLIENT
+    MOBILE --> CLIENT
+  end
+  subgraph API[FastAPI REST - same case and demo actor]
+    CREATE[POST /api/cases]
+    READ[GET /api/cases/id, offers, evidence, events]
+    PENDING[GET /api/cases/id/approvals]
+    DECIDE[POST /api/cases/id/approvals/approval_id/decision]
+    ORDER[GET /api/cases/id/orders]
+  end
+  DB[(PostgreSQL source of truth)]
+  CLIENT --> CREATE
+  CLIENT --> READ
+  CLIENT --> PENDING
+  CLIENT --> DECIDE
+  CLIENT --> ORDER
+  API --> DB
+  DB --> API
+  NOTE[Polling GET every 1-2 seconds; refresh loads existing Case ID from URL or session selection; no frontend success fabrication]
+  NOTE -.-> CLIENT

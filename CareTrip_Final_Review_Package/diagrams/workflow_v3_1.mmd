@@ -1,0 +1,36 @@
+flowchart TD
+  U[React: submit text and explicit sample date] --> API[FastAPI: persist Case and launch graph]
+  API --> REQ[W1 Requirements: extract and validate]
+  REQ --> FIELD{All required fields present?}
+  FIELD -->|No| MAX{Clarification limit reached?}
+  MAX -->|Yes| HUMAN[HUMAN_REVIEW and audit]
+  MAX -->|No| Q[Persist question and audit]
+  Q --> WAITQ[Interrupt: wait for answer]
+  WAITQ -->|POST answers + resume| REQ
+  FIELD -->|Yes| CAT[Tool: create immutable synthetic offer snapshots]
+  CAT --> ANY{Any valid candidates?}
+  ANY -->|No| HUMAN
+  ANY -->|Yes| PRE[W3 Comparison: preliminary ranking]
+  PRE --> EV[W2 Evidence: verify selected candidate]
+  EV --> SUP[Manager: evidence-based arbitration]
+  SUP --> PASS{Selected offer PASS all hard constraints?}
+  PASS -->|Yes| FINAL[Verified final recommendation]
+  PASS -->|No| LIMIT{Another candidate and rerank_count below 1?}
+  LIMIT -->|No| HUMAN
+  LIMIT -->|Yes| EXCL[Persist exclusions and MANAGER_RERANK audit]
+  EXCL --> RR[W3 Comparison: select next eligible offer]
+  RR --> EV
+  FINAL --> PREP[Idempotently create PENDING approval in PostgreSQL]
+  PREP --> WAITA[Interrupt: wait for user decision, no side effects]
+  WAITA -->|POST decision and resume| D{Durable PG approval decision?}
+  D -->|REJECTED| REJECT[REJECTED and audit]
+  D -->|Invalid, expired or stale| HUMAN
+  D -->|APPROVED| BOOK[W4 Booking: validate and upsert mock order]
+  BOOK --> EXISTS{Committed order read-back verified?}
+  EXISTS -->|No| HUMAN
+  EXISTS -->|Yes| REVIEW[W5 Review: structured summary and audit]
+  REVIEW --> DONE[Case DEMO_COMPLETED]
+  API -.-> PG[(PostgreSQL business data)]
+  SUP -.-> PG
+  BOOK -.-> PG
+  REQ -.-> CP[(LangGraph AsyncPostgresSaver)]

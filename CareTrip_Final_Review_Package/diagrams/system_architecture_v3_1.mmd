@@ -1,0 +1,55 @@
+flowchart TB
+  subgraph WEB[Frontend - React + TypeScript + Vite]
+    FORM[Text request / demo preset]
+    RESULT[Offer and evidence panels]
+    APPROVE[Human approval and mock order]
+    TRACE[DB-backed execution timeline]
+  end
+  subgraph API[Backend - Python + FastAPI]
+    REST[REST endpoints / Pydantic contracts]
+    SERVICE[Case and approval services]
+    RUNNER[Single-process demo case runner]
+  end
+  subgraph GRAPH[LangGraph StateGraph / LangChain model adapter]
+    MAN[Constrained Manager router / arbitration]
+    W1[W1 Requirements - LLM or labeled mock]
+    W2[W2 Evidence - deterministic]
+    W3[W3 Comparison - deterministic and optional LLM explanation]
+    W4[W4 Booking - deterministic simulation]
+    W5[W5 Review - deterministic]
+    MAN --> W1
+    MAN --> W3
+    MAN --> W2
+    MAN --> W4
+    MAN --> W5
+  end
+  subgraph TOOL[Local Skills and Adapters]
+    CATALOG[Synthetic catalog]
+    EVIDENCE[Synthetic evidence engine]
+    RANK[Ranking and hard constraints]
+    MOCK[Mock booking / idempotency]
+  end
+  subgraph DATA[PostgreSQL - single local DB instance]
+    BIZ[(8 business tables / Alembic)]
+    CP[(LangGraph-owned checkpoint tables)]
+  end
+  FORM --> REST
+  RESULT --> REST
+  APPROVE --> REST
+  TRACE --> REST
+  REST --> SERVICE
+  SERVICE --> RUNNER
+  RUNNER --> MAN
+  W1 --> CP
+  MAN --> CP
+  W2 --> EVIDENCE
+  W3 --> CATALOG
+  W3 --> RANK
+  W4 --> MOCK
+  SERVICE --> BIZ
+  W4 --> BIZ
+  W5 --> BIZ
+  NOTE[Docker Compose: web + api + db; local deployment only]
+  NOTE -.-> WEB
+  NOTE -.-> API
+  NOTE -.-> DATA

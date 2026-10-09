@@ -1,0 +1,63 @@
+flowchart TB
+  subgraph BROWSER[One browser-based React + TypeScript + Vite application]
+    subgraph DESKTOP[Desktop customer-service dashboard]
+      CASE[Text request and sample scenario]
+      OPS[Case status and Agent event timeline]
+      EVIDENCE_UI[Preliminary offers and evidence conflict panel]
+      FINAL_UI[Verified offer and order overview]
+    end
+    subgraph PHONE[Phone-sized simulator inside the desktop browser - no native app]
+      PHONE_FRAME[CSS phone frame 390 x 844 - viewport presentation only]
+      PHONE_PLAN[Customer-facing verified travel plan]
+      PHONE_APPROVE[Approve or reject through shared API]
+      PHONE_RESULT[Mock booking confirmation or rejection]
+      PHONE_FRAME --> PHONE_PLAN --> PHONE_APPROVE --> PHONE_RESULT
+    end
+    STORE[Shared Case ID + typed API client + query hooks; poll backend every 1-2 seconds]
+    DESKTOP --> STORE
+    PHONE --> STORE
+  end
+  subgraph SERVER[Python FastAPI application]
+    API[REST endpoints - Pydantic contracts]
+    SRV[Case and approval services; one demo actor]
+    RUNNER[Single-process controlled Case runner]
+    API --> SRV --> RUNNER
+  end
+  subgraph AGENT[LangGraph StateGraph - five hybrid worker roles]
+    MGR[Constrained Manager and arbitration]
+    REQ[W1 Requirements - LLM or labeled mock]
+    CMP[W3 Comparison - deterministic ranking]
+    EVD[W2 Evidence - source-backed deterministic checks]
+    BOOK[W4 Booking - idempotent simulation]
+    REVIEW[W5 Review - audit summary]
+    REQ --> CMP --> EVD --> MGR
+    MGR -->|Eligible verified offer| BOOK --> REVIEW
+    MGR -->|Conflicting evidence and remaining rerank| CMP
+  end
+  subgraph TOOLS[Python tools and synthetic fixtures]
+    CAT[Synthetic package catalog]
+    EVC[Synthetic evidence sources and assessment]
+    RANK[Budget filter and reranking]
+    ORDER[Mock order idempotency]
+  end
+  subgraph DATABASE[PostgreSQL]
+    BIZ[(8 business tables - Alembic)]
+    CP[(LangGraph-managed checkpoints)]
+  end
+  STORE -->|GET and POST same Case ID| API
+  RUNNER --> REQ
+  RUNNER --> MGR
+  REQ -.-> CP
+  MGR -.-> CP
+  CMP --> CAT
+  CMP --> RANK
+  EVD --> EVC
+  BOOK --> ORDER
+  SRV --> BIZ
+  BOOK --> BIZ
+  REVIEW --> BIZ
+  BIZ -.->|Source of truth - events, offers, approvals, orders| API
+  DEPLOY[Local Docker Compose - web Nginx + api Uvicorn + db PostgreSQL]
+  DEPLOY -.-> BROWSER
+  DEPLOY -.-> SERVER
+  DEPLOY -.-> DATABASE

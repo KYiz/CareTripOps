@@ -1,0 +1,33 @@
+sequenceDiagram
+  autonumber
+  actor Staff as Staff on desktop dashboard
+  participant Dash as React dashboard
+  participant API as FastAPI
+  participant Graph as LangGraph
+  participant PG as PostgreSQL
+  participant Phone as In-browser phone simulator
+  Staff->>Dash: Submit seeded travel request
+  Dash->>API: POST /api/cases
+  API->>PG: Insert Case + audit
+  API->>Graph: Start graph using thread_id = case_id
+  API-->>Dash: 201 case_id / RECEIVED
+  Graph->>PG: Save offers, evidence and audit events
+  Graph->>PG: Save pending approval
+  Graph-->>API: Pause at approval interrupt
+  loop While the case is active
+    Dash->>API: GET case, offers, evidence, events
+    Phone->>API: GET case, offers, approval
+    API-->>Dash: Current persisted state
+    API-->>Phone: Current verified plan and pending approval
+  end
+  Note over Phone,PG: Both UI views share the same Case ID; only one demo actor, not RBAC
+  Phone->>API: POST decision with nonce and state_version
+  API->>PG: Transactionally validate and commit approval decision
+  API->>Graph: Resume interrupted thread
+  Graph->>PG: Upsert idempotent simulated order, then verify
+  Graph->>PG: Append completion audit
+  API-->>Phone: Decision accepted; poll status
+  Dash->>API: GET case / events / orders
+  Phone->>API: GET case / orders
+  API-->>Dash: DEMO_COMPLETED + trace
+  API-->>Phone: Same backend-confirmed mock order

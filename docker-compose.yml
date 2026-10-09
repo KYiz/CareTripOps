@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16.8-alpine
+    environment:
+      POSTGRES_DB: caretrip
+      POSTGRES_USER: caretrip
+      POSTGRES_PASSWORD: caretrip
+    volumes:
+      - caretrip_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caretrip -d caretrip"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://caretrip:caretrip@db:5432/caretrip
+      MODEL_MODE: ${MODEL_MODE:-mock_llm}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_REQUIREMENTS_MODEL: ${GEMINI_REQUIREMENTS_MODEL:-gemini-3.8-flash}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_LIVE_MODEL: ${GEMINI_LIVE_MODEL:-gemini-3.8-live}
+      MAX_LIVE_SESSIONS_PER_CASE: ${MAX_LIVE_SESSIONS_PER_CASE:-2}
+      GEMINI_PLANNING_ENABLED: ${GEMINI_PLANNING_ENABLED:-true}
+      GEMINI_PLANNER_MODEL: ${GEMINI_PLANNER_MODEL:-gemini-3.8-flash}
+      GEMINI_REVIEWER_MODEL: ${GEMINI_REVIEWER_MODEL:-gemini-3.8-flash}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+      DEMO_NONCE_SECRET: ${DEMO_NONCE_SECRET:-caretrip-local-demo-only}
+      MAX_LLM_CALLS_PER_CASE: ${MAX_LLM_CALLS_PER_CASE:-7}
+      MAX_RERANKS: 1
+      MAX_CLARIFICATIONS: 2
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  caretrip_pgdata:

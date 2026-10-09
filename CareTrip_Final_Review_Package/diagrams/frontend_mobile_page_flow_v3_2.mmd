@@ -1,0 +1,45 @@
+flowchart TD
+  LAUNCH[Open iOS-style phone simulator within the React web app] --> SYNC[Load selected Case ID from shared web context]
+  SYNC --> HOME[Mobile Home - case summary and status]
+  HOME --> CASES[Cases - same persisted case data]
+  CASES --> DETAIL[Case Detail - requirements, state and timeline]
+
+  subgraph MOBILE[Phone-sized presentation - visual iOS patterns, not a native app]
+    DETAIL --> TABS{Choose a case view}
+    TABS -->|Agent Activity| AGENT[Agent Progress - persisted events and checkpoints]
+    TABS -->|Verified Plan| PLAN[Verified Offer - price, currency, version, evidence summary]
+    TABS -->|Review| REVIEW[Approval Review - pending decision and terms]
+    TABS -->|Result| RESULT[Result - backend-confirmed mock order or rejection]
+    HOME --> ALERTS[In-app status notices - derived from polling]
+    ALERTS --> DETAIL
+  end
+
+  PLAN --> REVIEW
+  REVIEW --> READY{Approval is pending and snapshot is current?}
+  READY -->|No| STALE[Show stale, missing or already-decided state; disable actions]
+  READY -->|Yes| ACTION{User decision}
+  ACTION -->|Approve| CONFIRM[Explicit confirmation of selected offer, version and amount]
+  ACTION -->|Reject| REJECT[Submit reject decision]
+  CONFIRM --> POST[POST decision with approval ID, nonce and state version]
+  REJECT --> POST
+  POST --> WAIT[Show submitting state and poll REST API]
+  WAIT --> SERVER{What does the persisted backend report?}
+  SERVER -->|Accepted and completed| RESULT
+  SERVER -->|Rejected| RESULT
+  SERVER -->|Stale or invalid| STALE
+  SERVER -->|Still processing| WAIT
+  STALE --> DETAIL
+  AGENT --> DETAIL
+  RESULT --> DETAIL
+
+  NOTE[One demo actor; one shared Case ID; same FastAPI and PostgreSQL as desktop]
+  NOTE -.-> SYNC
+  SCOPE[iOS-inspired styling only: no native Face ID, push notifications, payment or real booking]
+  SCOPE -.-> HOME
+
+  classDef page fill:#edf3ff,stroke:#477bd4,color:#1b3d73
+  classDef action fill:#e9f8f0,stroke:#2a8a63,color:#174d37
+  classDef caution fill:#fff0e9,stroke:#d08458,color:#743b21
+  class LAUNCH,HOME,CASES,DETAIL,AGENT,PLAN,REVIEW,RESULT,ALERTS page
+  class CONFIRM,POST,REJECT,WAIT action
+  class STALE,NOTE,SCOPE caution
