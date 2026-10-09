@@ -2,6 +2,8 @@
 
 **ZEIL Hackathon 2026 — Project** · Local demonstration · New Zealand scope
 
+**Demo video:** [Watch the CareTrip Ops walkthrough on YouTube](https://youtu.be/jF3KvJW-WAQ)
+
 ## Project overview
 
 CareTrip is an **Agentic Travel Service Platform for Seniors**. It currently demonstrates a B2C journey; supplier and travel-agency partnerships could later support B2B and B2B2C. Its intended advantage is controlled execution, supplier integration, evidence checks, and an auditable workflow that completes travel tasks. The target journey is request → planning → supplier discovery → verification → user authorization → booking execution → order management → live assistance. Today only the fixed Auckland package path can reach a **simulated** order. Supplier quotes and accessibility evidence are synthetic fixtures, not live travel data. There is no real inventory, reservation, payment, ticketing, identity system, or production authorization.
