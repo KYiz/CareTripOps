@@ -11,6 +11,7 @@ interface Props {
   setDemoDate: (value: string) => void; createCase: (requestOverride?: string) => void; useSample: () => void;
   startVoicePlan: () => void;
   voiceAvailable: boolean | null;
+  saved: boolean; saveCase: () => void;
   clarify: (answers: Record<string, string>) => void;
   decide: (decision: 'APPROVE' | 'REJECT') => void;
 }
@@ -97,7 +98,7 @@ export default function PhoneSimulator(props: Props) {
             <div><strong>{name}</strong><small>{name === 'Auckland' ? 'Synthetic package demo' : 'Illustrative itinerary only'}</small>
               <button type="button" disabled={mutating} onClick={() => props.createCase(`Three travelers want a relaxed three-day trip to ${name}. Our total budget is NZD 1000. We need a lift serving all guest floors.`)}>{mutating ? 'Planning…' : 'Plan this trip →'}</button></div>
           </article>)}
-        </div> : tab === 'TRIPS' ? <div className="ct-phone-explore"><p className="ct-phone-kicker">MY TRIPS</p><h2>Your saved trips</h2><p className="ct-phone-lead">Cases opened in this browser. Each trip loads its own saved records.</p>
+        </div> : tab === 'TRIPS' ? <div className="ct-phone-explore"><p className="ct-phone-kicker">MY TRIPS</p><h2>Your saved trips</h2><p className="ct-phone-lead">Trips you chose to keep on this device. Each trip loads its own backend records.</p>
           {props.tripListError && <div className="ct-phone-alert" role="alert">Some saved trips could not be loaded. Check the connection and reopen this page.</div>}
           {props.tripListLoading ? <div className="ct-phone-message" role="status">Loading saved trips…</div> : props.trips.length ? props.trips.map(trip => <button className="ct-phone-trip-link" key={trip.id} type="button" onClick={() => { props.openCase(trip.id); setTab('TRIP'); }}><strong>{trip.destination}</strong><span>{friendlyStatus(trip.status)} · {trip.id.slice(0, 8)}</span></button>) : <div className="ct-phone-message">No accessible saved trips in this browser yet.</div>}
           <button className="ct-phone-primary" type="button" onClick={() => { setPlanningNew(true); setTab('TRIP'); }}>Plan a new trip →</button>
@@ -115,6 +116,8 @@ export default function PhoneSimulator(props: Props) {
           {!planningNew && <>
           <p className="ct-phone-kicker">YOUR TRIP</p><h2>{destination ? `Let's explore ${destination}` : 'Your trip is taking shape'}</h2>
           <p className="ct-phone-lead">{friendlyStatus(current?.status)}</p>
+          {caseId && <div className="ct-phone-message"><p>{props.saved ? 'This trip will reopen after a refresh on this device.' : 'This view will clear when you refresh. Save it to reopen this trip later.'}</p>
+            {!props.saved && <button type="button" className="ct-phone-outline" onClick={props.saveCase}>Save this trip</button>}</div>}
           <TravelPhoto image={photo} className="ct-phone-trip-photo" eager caption />
           <div className="ct-phone-trip-facts"><div><span>TRAVELERS</span><strong>{requirements?.traveler_count ?? '—'}</strong></div>
             <div><span>TIME AWAY</span><strong>{requirements?.duration_days ? `${requirements.duration_days} days` : '—'}</strong></div>
@@ -167,7 +170,7 @@ export default function PhoneSimulator(props: Props) {
           {completed && <div className="ct-phone-complete"><div aria-hidden="true">✓</div><h3>Sample package order recorded</h3><p>Simulated order {order.id.slice(0, 8)} was confirmed by the backend for the package snapshot. The illustrative daily outline is not an order confirmation.</p><strong>{order.currency} {order.total_amount}</strong></div>}
           {current?.status === 'REJECTED' && <div className="ct-phone-message">You declined this plan. No order was created.</div>}
           {['FAILED', 'RECOVERY_REQUIRED'].includes(current?.status ?? '') && <div className="ct-phone-alert">No booking was made. A travel advisor needs to review this case.</div>}
-           {caseId && <p className="ct-phone-case">Case {caseId.slice(0, 8)} · Saved backend case</p>}
+           {caseId && <p className="ct-phone-case">Case {caseId.slice(0, 8)} · {props.saved ? 'Saved for this browser' : 'Not saved for this browser'}</p>}
           </>}
         </div>}
       </div>

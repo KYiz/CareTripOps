@@ -11,11 +11,27 @@ import { resolveRoute, routeHref, type AppRoute } from './routes';
 
 const sampleRequest = 'Three travelers want a relaxed three-day Auckland trip. We need a lift serving all guest floors. Our total budget is NZD 1000.';
 const sampleDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+const savedCasesKey = 'caretrip:saved-case-ids';
+const lastSavedCaseKey = 'caretrip:last-saved-case';
+
+function savedCaseIds(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(savedCasesKey) || '[]');
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  } catch { return []; }
+}
 
 function initialCaseId(): string {
   const fromUrl = new URLSearchParams(location.search).get('caseId');
-  if (fromUrl) return fromUrl;
-  try { return localStorage.getItem('caretrip:last-case') ?? ''; } catch { return ''; }
+  const saved = savedCaseIds();
+  if (fromUrl) {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    return navigation?.type === 'reload' && !saved.includes(fromUrl) ? '' : fromUrl;
+  }
+  try {
+    const lastSaved = localStorage.getItem(lastSavedCaseKey) ?? '';
+    return saved.includes(lastSaved) ? lastSaved : '';
+  } catch { return ''; }
 }
 
 export default function App() {
@@ -29,13 +45,7 @@ export default function App() {
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [tripIds, setTripIds] = useState<string[]>(() => {
-    try {
-      const ids = JSON.parse(localStorage.getItem('caretrip:case-ids') || '[]') as string[];
-      const last = initialCaseId();
-      return last && !ids.includes(last) ? [last, ...ids] : ids;
-    } catch { return initialCaseId() ? [initialCaseId()] : []; }
-  });
+  const [tripIds, setTripIds] = useState(savedCaseIds);
   const [tripSummaries, setTripSummaries] = useState<{ id: string; destination: string; status: string }[]>([]);
   const [tripListError, setTripListError] = useState(false);
   const [tripListLoading, setTripListLoading] = useState(false);
@@ -44,6 +54,7 @@ export default function App() {
   const terminal = snapshot && ['DEMO_COMPLETED', 'REJECTED', 'HUMAN_REVIEW', 'FAILED'].includes(snapshot.caseData.status);
   const pollMs = terminal ? 10000 : 1500;
   const link = (path: AppRoute) => routeHref(path, caseId);
+  const caseSaved = Boolean(caseId && tripIds.includes(caseId));
 
   function navigate(event: MouseEvent<HTMLAnchorElement>, path: AppRoute) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -71,8 +82,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!caseId) return;
-    try { localStorage.setItem('caretrip:last-case', caseId); } catch { /* Case access still requires its saved token. */ }
+    if (!caseId) {
+      const url = new URL(location.href);
+      if (url.searchParams.has('caseId')) {
+        url.searchParams.delete('caseId');
+        url.searchParams.delete('voice');
+        history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      }
+      return;
+    }
     if (route && route !== '/' && !new URLSearchParams(location.search).has('caseId')) {
       history.replaceState(null, '', link(route));
     }
@@ -122,20 +140,29 @@ export default function App() {
     setActionError('');
     try {
       const created = await api.createCase(requestOverride ?? request, demoDate, voiceStart);
-      const nextIds = [created.case_id, ...tripIds.filter(id => id !== created.case_id)];
-      try { localStorage.setItem('caretrip:case-ids', JSON.stringify(nextIds)); localStorage.setItem('caretrip:last-case', created.case_id); } catch { /* Case access still requires its saved token. */ }
-      setTripIds(nextIds);
       if (route === '/') {
-        location.assign(`${routeHref('/mobile', created.case_id)}${voiceStart ? '&voice=1' : ''}`);
-        return;
+        history.pushState(null, '', `${routeHref('/mobile', created.case_id)}${voiceStart ? '&voice=1' : ''}`);
+        setRoute('/mobile');
+      } else {
+        history.replaceState(null, '', `${location.pathname}?caseId=${encodeURIComponent(created.case_id)}${voiceStart ? '&voice=1' : ''}`);
       }
-      history.replaceState(null, '', `${location.pathname}?caseId=${encodeURIComponent(created.case_id)}${voiceStart ? '&voice=1' : ''}`);
       selectedCaseId.current = created.case_id;
       setSnapshot(null);
       setCaseId(created.case_id);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : 'Case creation failed');
     } finally { setMutating(false); }
+  }
+
+  function saveCase() {
+    if (!caseId || caseSaved) return;
+    const nextIds = [caseId, ...tripIds];
+    try {
+      localStorage.setItem(savedCasesKey, JSON.stringify(nextIds));
+      localStorage.setItem(lastSavedCaseKey, caseId);
+      setTripIds(nextIds);
+      setActionError('');
+    } catch { setActionError('This browser could not save the trip for your next visit.'); }
   }
 
   function openCase(id: string) {
@@ -165,6 +192,7 @@ export default function App() {
     request={request} demoDate={demoDate} setRequest={setRequest} setDemoDate={setDemoDate}
     createCase={createCase} useSample={() => setRequest(sampleRequest)}
     voiceAvailable={voiceAvailable}
+    saved={caseSaved} saveCase={saveCase}
     startVoicePlan={() => void createCase('I would like to plan a New Zealand trip by voice.', true)}
     clarify={(answers) => mutate(() => api.clarify(caseId, answers))}
     decide={(decision) => snapshot?.approval && mutate(() => api.decide(caseId, snapshot.approval!, decision))} />;
@@ -180,6 +208,7 @@ export default function App() {
         <a href={link('/demo')} onClick={event => navigate(event, '/demo')} aria-current={route === '/demo' ? 'page' : undefined}>Demo</a>
       </nav>
       <div className="ct-header-right">
+        {caseId && <button type="button" className="ct-save-case" onClick={saveCase} disabled={caseSaved}>{caseSaved ? 'Saved on this device' : 'Save this trip'}</button>}
         <span className="ct-mode">{!caseId ? 'No case selected' : !snapshot ? 'Case data pending' : snapshot.caseData.model_mode === 'api'
           ? `${snapshot.caseData.llm_provider || 'Live'} ${snapshot.caseData.model_status === 'SUCCEEDED' ? 'used' : snapshot.caseData.model_status === 'FAILED' ? 'failed' : 'pending'}`
           : 'Mock model'}</span>
