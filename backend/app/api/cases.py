@@ -17,10 +17,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app import case_state, clarification, config, jobs
 from app.api import common
+from app.api.bookings import orders_view
 from app.api.common import client_ip, envelope, iso, money, rate_limited
 from app.auth import SESSION_COOKIE, CaseAccess, access_role, case_role, require_recent_auth, require_user, session_user
 from app.db import (Approval, AuditEvent, Case, CaseMember, Evidence, Offer, OfferAssessment, OfferRanking, Requirement,
-                    ReviewTask, SessionLocal, User, add_event, offer_verdict)
+                    ReviewTask, SessionLocal, User, add_event, offer_verdicts)
 from app.errors import fail
 from app.events import case_event_stream
 from app.guide_text import language_of
@@ -80,34 +81,39 @@ def _model_status(session, case: Case) -> str:
             else "PENDING")
 
 
+def case_view(session, access: CaseAccess) -> dict:
+    case_id = access.case_id
+    case = session.get(Case, case_id)
+    req = session.scalar(select(Requirement).where(Requirement.case_id == case_id))
+    itinerary = case_state.current_itinerary(session, case_id)
+    days, source = (itinerary.days, itinerary.source) if itinerary else ([], "DETERMINISTIC_DRAFT")
+    if req and not itinerary:
+        if not req.missing_fields and planning_enabled() and case.status not in {"HUMAN_REVIEW", "RECOVERY_REQUIRED", "REJECTED"}:
+            source = "PENDING"  # The Gemini planner is still writing the first outline.
+        else:
+            days = case_state.draft_days(req, case.language, case.original_request)
+    requirements = None if not req else {
+        "destination": req.destination, "departure_date": iso(req.departure_date),
+        "destination_scope": req.destination_scope, "attractions": req.attractions, "travel_pace": req.travel_pace,
+        "traveler_count": req.traveler_count, "duration_days": req.duration_days, "budget": money(req.budget),
+        "currency": req.currency, "missing_fields": req.missing_fields,
+        # Health-related needs are for the traveler and those helping plan, not every viewer.
+        "hard_constraints": req.hard_constraints if access.role != "VIEWER" else
+        {key: value for key, value in req.hard_constraints.items() if key != "needs"}}
+    return {
+        "case_id": case.id, "status": case.status, "active_node": case.active_node,
+        "state_version": case.state_version, "requirements": requirements, "draft_itinerary": days,
+        "itinerary_source": source, "itinerary_version": itinerary.version if itinerary else 0,
+        "missing_fields": req.missing_fields if req else [], "next_action": NEXT_ACTION.get(case.status),
+        "model_mode": case.requirements_model_mode, "model_status": _model_status(session, case),
+        "llm_provider": case.requirements_provider, "my_role": access.role, "run_state": jobs.run_state(case_id),
+        "created_at": iso(case.created_at)}
+
+
 @router.get("/api/cases/{case_id}")
 def read_case(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        case = session.get(Case, case_id)
-        req = session.scalar(select(Requirement).where(Requirement.case_id == case_id))
-        itinerary = case_state.current_itinerary(session, case_id)
-        days, source = (itinerary.days, itinerary.source) if itinerary else ([], "DETERMINISTIC_DRAFT")
-        if req and not itinerary:
-            if not req.missing_fields and planning_enabled() and case.status not in {"HUMAN_REVIEW", "RECOVERY_REQUIRED", "REJECTED"}:
-                source = "PENDING"  # The Gemini planner is still writing the first outline.
-            else:
-                days = case_state.draft_days(req, case.language, case.original_request)
-        requirements = None if not req else {
-            "destination": req.destination, "departure_date": iso(req.departure_date),
-            "destination_scope": req.destination_scope, "attractions": req.attractions, "travel_pace": req.travel_pace,
-            "traveler_count": req.traveler_count, "duration_days": req.duration_days, "budget": money(req.budget),
-            "currency": req.currency, "missing_fields": req.missing_fields,
-            # Health-related needs are for the traveler and those helping plan, not every viewer.
-            "hard_constraints": req.hard_constraints if access.role != "VIEWER" else
-            {key: value for key, value in req.hard_constraints.items() if key != "needs"}}
-        return envelope({
-            "case_id": case.id, "status": case.status, "active_node": case.active_node,
-            "state_version": case.state_version, "requirements": requirements, "draft_itinerary": days,
-            "itinerary_source": source, "itinerary_version": itinerary.version if itinerary else 0,
-            "missing_fields": req.missing_fields if req else [], "next_action": NEXT_ACTION.get(case.status),
-            "model_mode": case.requirements_model_mode, "model_status": _model_status(session, case),
-            "llm_provider": case.requirements_provider, "my_role": access.role, "run_state": jobs.run_state(case_id),
-            "created_at": iso(case.created_at)})
+        return envelope(case_view(session, access))
 
 
 @router.post("/api/cases/{case_id}/clarifications")
@@ -129,16 +135,20 @@ def resume_case(case_id: str, access: CaseAccess = Depends(case_role("CO_PLANNER
     return envelope({"case_id": case_id, "accepted": True, "run_state": "queued"})
 
 
+def approval_view(session, access: CaseAccess) -> dict | None:
+    row = session.scalar(select(Approval).where(Approval.case_id == access.case_id).order_by(Approval.created_at.desc()))
+    return None if not row else {
+        "approval_id": row.id, "case_id": row.case_id, "offer_id": row.offer_id, "offer_version": row.offer_version,
+        "approved_amount": money(row.approved_amount), "currency": row.currency,
+        "case_state_version": row.case_state_version, "status": row.status,
+        # Only the traveler can approve, so only they receive the nonce.
+        "nonce": demo_nonce(row.id) if row.status == "PENDING" and access.is_owner else None}
+
+
 @router.get("/api/cases/{case_id}/approvals")
 def approvals(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        row = session.scalar(select(Approval).where(Approval.case_id == case_id).order_by(Approval.created_at.desc()))
-        return envelope(None if not row else {
-            "approval_id": row.id, "case_id": row.case_id, "offer_id": row.offer_id, "offer_version": row.offer_version,
-            "approved_amount": money(row.approved_amount), "currency": row.currency,
-            "case_state_version": row.case_state_version, "status": row.status,
-            # Only the traveler can approve, so only they receive the nonce.
-            "nonce": demo_nonce(row.id) if row.status == "PENDING" and access.is_owner else None})
+        return envelope(approval_view(session, access))
 
 
 @router.post("/api/cases/{case_id}/approvals/{approval_id}/decision")
@@ -165,58 +175,84 @@ async def decision(case_id: str, approval_id: str, body: Decision, request: Requ
     return envelope({"approval_id": approval_id, "status": status, "accepted": True})
 
 
-def _offer_payload(session, row: Offer, approved_ids: set, review_ids: set) -> dict:
-    assessment = offer_verdict(session, row.id)
-    ranking = session.scalar(select(OfferRanking).where(OfferRanking.offer_id == row.id)
-                             .order_by(OfferRanking.rank_round.desc()).limit(1))
-    verdict = assessment.verdict if assessment else None
-    label = ("VERIFIED" if row.id in approved_ids and verdict == "PASS" else
-             {"BLOCK": "BLOCKED", "REVIEW": "REVIEW"}.get(verdict, "PRELIMINARY"))
-    return {"id": row.id, "case_id": row.case_id, "product_id": row.catalog_product_id, "name": row.name,
+def offers_view(session, case_id: str) -> list[dict]:
+    """Every offer with its verdict per claim and its latest ranking, in a fixed number of queries."""
+    approved = set(session.scalars(select(Approval.offer_id).where(Approval.case_id == case_id)).all())
+    reviewing = set(session.scalars(select(ReviewTask.offer_id).where(ReviewTask.case_id == case_id,
+                                                                      ReviewTask.status == "OPEN")).all())
+    rows = session.scalars(select(Offer).where(Offer.case_id == case_id).order_by(Offer.total_amount)).all()
+    verdicts = offer_verdicts(session, [row.id for row in rows])
+    rankings: dict = {}
+    for ranking in session.scalars(select(OfferRanking).where(OfferRanking.offer_id.in_([row.id for row in rows]))
+                                   .order_by(OfferRanking.rank_round.desc())):
+        rankings.setdefault(ranking.offer_id, ranking)
+    result = []
+    for row in rows:
+        assessment, ranking = verdicts[row.id], rankings.get(row.id)
+        verdict = assessment.verdict if assessment else None
+        label = ("VERIFIED" if row.id in approved and verdict == "PASS" else
+                 {"BLOCK": "BLOCKED", "REVIEW": "REVIEW"}.get(verdict, "PRELIMINARY"))
+        result.append({
+            "id": row.id, "case_id": row.case_id, "product_id": row.catalog_product_id, "name": row.name,
             "version": row.version, "total_amount": money(row.total_amount), "currency": row.currency,
             "includes": row.includes, "supplier_claims": row.supplier_claims, "attributes": row.attributes,
             "cancellation_policy": row.cancellation_policy, "expires_at": iso(row.expires_at), "label": label,
             "verdict": verdict, "reason_code": assessment.reason_code if assessment else None,
-            "claims": {claim: row.verdict for claim, row in assessment.claims.items()} if assessment else {},
-            "under_review": row.id in review_ids,
+            "claims": {claim: item.verdict for claim, item in assessment.claims.items()} if assessment else {},
+            "under_review": row.id in reviewing,
             "ranking": ranking and {"round": ranking.rank_round, "eligible": ranking.eligible,
-                                    "score": float(ranking.score), "factors": ranking.factors}}
+                                    "score": float(ranking.score), "factors": ranking.factors}})
+    return result
 
 
 @router.get("/api/cases/{case_id}/offers")
 def offers(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        approved = set(session.scalars(select(Approval.offer_id).where(Approval.case_id == case_id)).all())
-        reviewing = set(session.scalars(select(ReviewTask.offer_id).where(ReviewTask.case_id == case_id,
-                                                                          ReviewTask.status == "OPEN")).all())
-        rows = session.scalars(select(Offer).where(Offer.case_id == case_id).order_by(Offer.total_amount)).all()
-        return envelope([_offer_payload(session, row, approved, reviewing) for row in rows])
+        return envelope(offers_view(session, case_id))
+
+
+def evidence_view(session, case_id: str) -> dict:
+    sources = session.execute(select(Evidence, Offer).join(Offer, Offer.id == Evidence.offer_id)
+                              .where(Offer.case_id == case_id)).all()
+    latest = {(offer.id, assessment.claim_type): (assessment, offer) for assessment, offer in session.execute(
+        select(OfferAssessment, Offer).join(Offer, Offer.id == OfferAssessment.offer_id)  # Later versions win.
+        .where(Offer.case_id == case_id).order_by(OfferAssessment.assessment_version)).all()}
+    return {
+        "sources": [{"offer_id": o.id, "product_id": o.catalog_product_id, "claim_type": e.claim_type,
+                     "source": e.source, "polarity": e.polarity, "strength": e.source_strength,
+                     "reference": e.source_reference, "detail": e.detail, "url": e.source_url,
+                     "content_hash": e.content_hash, "source_time": iso(e.source_time)} for e, o in sources],
+        "assessments": [{"offer_id": o.id, "product_id": o.catalog_product_id, "claim_type": a.claim_type,
+                         "verdict": a.verdict, "version": a.assessment_version, "reason_code": a.reason_code,
+                         "source_refs": a.source_refs} for a, o in latest.values()]}
+
+
+def events_view(session, case_id: str) -> list[dict]:
+    rows = session.scalars(select(AuditEvent).where(AuditEvent.case_id == case_id).order_by(AuditEvent.id)).all()
+    return [{"id": e.id, "agent_name": e.agent_name, "event_type": e.event_type, "status": e.status,
+             "payload": e.payload, "created_at": iso(e.created_at)} for e in rows]
 
 
 @router.get("/api/cases/{case_id}/evidence")
 def evidence(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        sources = session.execute(select(Evidence, Offer).join(Offer, Offer.id == Evidence.offer_id)
-                                  .where(Offer.case_id == case_id)).all()
-        latest = {(offer.id, assessment.claim_type): (assessment, offer) for assessment, offer in session.execute(
-            select(OfferAssessment, Offer).join(Offer, Offer.id == OfferAssessment.offer_id)  # Later versions win.
-            .where(Offer.case_id == case_id).order_by(OfferAssessment.assessment_version)).all()}
-        return envelope({
-            "sources": [{"offer_id": o.id, "product_id": o.catalog_product_id, "claim_type": e.claim_type,
-                         "source": e.source, "polarity": e.polarity, "strength": e.source_strength,
-                         "reference": e.source_reference, "detail": e.detail, "url": e.source_url,
-                         "content_hash": e.content_hash, "source_time": iso(e.source_time)} for e, o in sources],
-            "assessments": [{"offer_id": o.id, "product_id": o.catalog_product_id, "claim_type": a.claim_type,
-                             "verdict": a.verdict, "version": a.assessment_version, "reason_code": a.reason_code,
-                             "source_refs": a.source_refs} for a, o in latest.values()]})
+        return envelope(evidence_view(session, case_id))
 
 
 @router.get("/api/cases/{case_id}/events")
 def events(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        rows = session.scalars(select(AuditEvent).where(AuditEvent.case_id == case_id).order_by(AuditEvent.id)).all()
-        return envelope([{"id": e.id, "agent_name": e.agent_name, "event_type": e.event_type, "status": e.status,
-                          "payload": e.payload, "created_at": iso(e.created_at)} for e in rows])
+        return envelope(events_view(session, case_id))
+
+
+@router.get("/api/cases/{case_id}/snapshot")
+def snapshot(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
+    """Everything both views show about a trip, read in one request and one database session."""
+    with SessionLocal() as session:
+        return envelope({"case": case_view(session, access), "offers": offers_view(session, case_id),
+                         "evidence": evidence_view(session, case_id), "approval": approval_view(session, access),
+                         "orders": orders_view(session, case_id, access.is_owner),
+                         "events": events_view(session, case_id)})
 
 
 @router.get("/api/cases/{case_id}/stream")

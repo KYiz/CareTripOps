@@ -1,12 +1,13 @@
 """Shared steps for the PostgreSQL-backed API tests: sign in, create a trip, wait, approve."""
 
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 
+from app.clock import nz_today
 from app.db import engine
 
 
@@ -66,7 +67,7 @@ def create(client, request=None):
     if "caretrip_session" not in client.cookies:
         login(client)
     body = {"request": request or "Three travelers need a three-day Auckland trip with a lift. Budget NZD 1000.",
-            "demo_date": str(date.today() + timedelta(days=7))}
+            "demo_date": str(nz_today() + timedelta(days=7))}
     response = client.post("/api/cases", json=body)
     assert response.status_code == 201, response.text
     return response.json()["data"]["case_id"]

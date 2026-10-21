@@ -18,7 +18,7 @@ from app.models.orders import Approval, Order, Payment, PaymentEvent
 __all__ = ["Base", "SessionLocal", "engine", "utcnow", "CaseInvitation", "CaseMember", "LoginCode", "TravelerProfile",
            "User", "UserSession", "AuditEvent", "Case", "ConversationTurn", "ItineraryProposal", "ItineraryVersion", "Requirement", "Evidence",
            "Offer", "OfferAssessment", "OfferRanking", "ReviewTask", "CaseNote", "HelpRequest", "Job", "Notification", "Approval", "Order", "Payment",
-           "PaymentEvent", "OfferVerdict", "latest_claims", "offer_verdict", "add_event", "set_status"]
+           "PaymentEvent", "OfferVerdict", "latest_claims", "offer_verdict", "offer_verdicts", "add_event", "set_status"]
 
 
 SEVERITY = {"BLOCK": 0, "REVIEW": 1, "PASS": 2}
@@ -44,14 +44,26 @@ def latest_claims(session, offer_id: str) -> "dict[str, OfferAssessment]":
     return latest
 
 
-def offer_verdict(session, offer_id: str) -> OfferVerdict | None:
-    claims = latest_claims(session, offer_id)
+def _verdict(claims: dict) -> OfferVerdict | None:
     if not claims:
         return None
     decisive = min(claims.values(), key=lambda row: (SEVERITY[row.verdict], row.claim_type))
     refs = list(dict.fromkeys(ref for row in claims.values() for ref in row.source_refs))
     return OfferVerdict(decisive.verdict, decisive.reason_code, decisive.claim_type,
                         max(row.assessment_version for row in claims.values()), refs, claims)
+
+
+def offer_verdict(session, offer_id: str) -> OfferVerdict | None:
+    return _verdict(latest_claims(session, offer_id))
+
+
+def offer_verdicts(session, offer_ids: list[str]) -> "dict[str, OfferVerdict | None]":
+    """`offer_verdict` for many offers with one query."""
+    latest: dict = {offer_id: {} for offer_id in offer_ids}
+    for row in session.scalars(select(OfferAssessment).where(OfferAssessment.offer_id.in_(offer_ids))
+                               .order_by(OfferAssessment.assessment_version.desc())):
+        latest[row.offer_id].setdefault(row.claim_type, row)
+    return {offer_id: _verdict(claims) for offer_id, claims in latest.items()}
 
 
 def add_event(session, case_id: str, agent: str, event_type: str, status: str, payload: dict | None = None):

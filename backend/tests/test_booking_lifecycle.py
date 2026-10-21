@@ -1,6 +1,7 @@
 """Supplier failures, payments, cancellation, notifications and advisor reviews."""
 
 import time
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,6 +71,7 @@ def test_supplier_outage_is_retried_automatically(monkeypatch):
         inject("search", "unavailable", count=3)  # One run: the first call plus the client's two retries.
         case_id = create(client)
         assert wait_for(client, case_id, {"AWAITING_APPROVAL", "RECOVERY_REQUIRED"})["status"] == "AWAITING_APPROVAL"
+        wait_idle(case_id)  # The status is written a moment before the run records itself as done.
         from app.db import Job
         with SessionLocal() as session:
             job = session.query(Job).filter_by(case_id=case_id, kind="start").one()
@@ -232,3 +234,64 @@ def test_an_offer_that_expired_during_review_goes_to_a_person_once(override_sett
         wait_idle(case_id)
         events = [e["event_type"] for e in get(client, f"/api/cases/{case_id}/events")]
         assert "APPROVAL_NOT_PREPARED" in events and "RUN_FAILED" not in events
+
+
+def test_a_payment_after_the_hold_lapsed_renews_the_hold_and_books():
+    with TestClient(app) as client:
+        case_id = create(client)
+        wait_for(client, case_id, {"AWAITING_APPROVAL"})
+        inject("book", "expired")  # The supplier's hold ran out before the payment arrived.
+        approve(client, case_id)
+        assert wait_for(client, case_id, {"BOOKED", "HUMAN_REVIEW", "RECOVERY_REQUIRED"})["status"] == "BOOKED"
+        order = get(client, f"/api/cases/{case_id}/orders")[0]
+        assert order["status"] == "CONFIRMED" and order["payment"]["status"] == "CAPTURED"
+        assert "SUPPLIER_HOLD_RENEWED" in [e["event_type"] for e in get(client, f"/api/cases/{case_id}/events")]
+
+
+def test_an_unpaid_checkout_lasts_the_payment_window_not_the_hold():
+    from sqlalchemy import text as sql
+
+    from app.booking import expire_stale_payments
+    from app.payments import set_payments
+    checkout = FakeCheckout()
+    set_payments(checkout)
+    with TestClient(app) as client:
+        case_id = create(client)
+        wait_for(client, case_id, {"AWAITING_APPROVAL"})
+        approve(client, case_id)
+        wait_for(client, case_id, {"AWAITING_PAYMENT"})
+        wait_idle(case_id)
+
+        def age(payment_minutes):
+            with SessionLocal.begin() as session:
+                session.execute(sql("UPDATE orders SET supplier_hold_expires_at = now() - interval '1 minute' "
+                                    "WHERE case_id = :id"), {"id": case_id})
+                session.execute(sql("UPDATE payments SET created_at = now() - make_interval(mins => :m) WHERE order_id IN "
+                                    "(SELECT id FROM orders WHERE case_id = :id)"), {"id": case_id, "m": payment_minutes})
+
+        age(25)  # The hold lapsed, but the traveler may still be paying.
+        assert case_id not in expire_stale_payments()
+        age(40)
+        assert case_id in expire_stale_payments()
+        assert wait_for(client, case_id, {"HUMAN_REVIEW", "BOOKED"})["status"] == "HUMAN_REVIEW"
+        assert "release" in checkout.calls
+
+
+def test_refund_deadlines_count_new_zealand_days(monkeypatch):
+    from datetime import date, datetime, timezone
+    from types import SimpleNamespace
+
+    import app.clock as clock
+    from app.booking import cancellation_quote
+
+    class MorningInAuckland(datetime):  # 09:00 on 21 Oct in Auckland is still 20 Oct in UTC.
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 20, 20, 0, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(clock, "datetime", MorningInAuckland)
+    order = SimpleNamespace(departure_date=date(2026, 10, 27), total_amount="900.00")
+    offer = SimpleNamespace(cancellation_policy=[{"days_before": 7, "refund_percent": 100},
+                                                 {"days_before": 2, "refund_percent": 50}])
+    # Six New Zealand days before departure: half back, not the full refund a UTC date would give.
+    assert cancellation_quote(order, offer) == (50, Decimal("450.00"))

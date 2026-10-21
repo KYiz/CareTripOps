@@ -1,7 +1,7 @@
 """PostgreSQL-backed workflow tests: planning, offers, approval, recovery and the guide."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +9,7 @@ from starlette.websockets import WebSocketDisconnect
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy import text
 
+from app.clock import nz_today
 from app.config import settings
 from app.db import Approval, Case, Offer, SessionLocal, engine
 from app.main import app
@@ -399,7 +400,7 @@ def test_a_chinese_request_produces_a_chinese_trip_and_guide():
         login(client)
         response = client.post("/api/cases", headers={"accept-language": "zh"}, json={
             "request": "我们三个人想去奥克兰轻松玩三天，总预算 1000 纽币，需要能到所有客房楼层的电梯。",
-            "demo_date": str(date.today() + timedelta(days=7))})
+            "demo_date": str(nz_today() + timedelta(days=7))})
         assert response.status_code == 201
         case_id = response.json()["data"]["case_id"]
         case = wait_for(client, case_id, {"AWAITING_APPROVAL", "RECOVERY_REQUIRED", "HUMAN_REVIEW"})
@@ -412,3 +413,23 @@ def test_a_chinese_request_produces_a_chinese_trip_and_guide():
         with SessionLocal() as session:
             assert session.get(Case, case_id).language == "zh"
 
+
+
+def test_one_snapshot_request_matches_the_separate_reads():
+    with TestClient(app) as client:
+        login(client)
+        case_id = create(client)
+        wait_for(client, case_id, {"AWAITING_APPROVAL"})
+        base = f"/api/cases/{case_id}"
+        snapshot = get(client, f"{base}/snapshot")
+        separate = {"case": get(client, base), "offers": get(client, f"{base}/offers"),
+                    "evidence": get(client, f"{base}/evidence"), "approval": get(client, f"{base}/approvals"),
+                    "orders": get(client, f"{base}/orders"), "events": get(client, f"{base}/events")}
+        assert snapshot.keys() == separate.keys()
+        for key in separate:
+            assert snapshot[key] == separate[key], key
+        assert {o["product_id"]: o["label"] for o in snapshot["offers"]} == {
+            "PACKAGE_A": "BLOCKED", "PACKAGE_C": "REVIEW", "PACKAGE_B": "VERIFIED"}
+        assert all(o["ranking"] for o in snapshot["offers"])
+        client.cookies.clear()
+        assert client.get(f"{base}/snapshot").status_code == 401

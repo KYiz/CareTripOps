@@ -82,6 +82,12 @@ def test_structured_model_plan_rejects_unverified_transport_time():
     ("酒店有电梯吗？", "ACCESS_QUESTION"),
     ("Does the hotel have a lift?", "ACCESS_QUESTION"),
     ("Can we switch to a cheaper hotel with a lift?", "PACKAGE_CHANGE"),
+    # Keeping the hotel is not a request to change it.
+    ("I do not want to change the hotel, just tell me about the lift", "ACCESS_QUESTION"),
+    ("I don't need to switch hotels. Is the bathroom accessible?", "ACCESS_QUESTION"),
+    ("酒店不用换，就想问问有没有电梯", "ACCESS_QUESTION"),
+    ("不换酒店，下一站去哪里？", "NEXT_ACTIVITY"),
+    ("Please don't change my booking, I'm tired, can we rest more?", "REVISION"),
 ])
 def test_chinese_messages_are_classified(message, intent):
     assert classify_intent(message) == intent

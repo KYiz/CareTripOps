@@ -28,6 +28,11 @@ class PaymentState:
     payment_intent_ref: str | None = None
 
 
+# How long a traveler has to finish paying. Stripe Checkout needs at least 30 minutes. The supplier hold may be
+# shorter: booking renews it once if the payment arrives after it lapsed.
+PAYMENT_WINDOW_MINUTES = 31
+
+
 def cents(amount: Decimal) -> int:
     return int((Decimal(amount) * 100).to_integral_value())
 
@@ -83,8 +88,7 @@ class StripePaymentProvider:
             payment_intent_data={"capture_method": "manual", "metadata": {"order_id": order_id}},
             metadata={"order_id": order_id},
             success_url=success_url, cancel_url=cancel_url,
-            # Stripe requires at least 30 minutes; the supplier hold is renewed or the order fails if it lapses.
-            expires_at=int((datetime.now(timezone.utc) + timedelta(minutes=31)).timestamp()),
+            expires_at=int((datetime.now(timezone.utc) + timedelta(minutes=PAYMENT_WINDOW_MINUTES)).timestamp()),
             idempotency_key=key,
         )
         return PaymentSession(provider_ref=session.id, status="REQUIRES_ACTION", checkout_url=session.url)

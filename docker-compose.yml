@@ -57,6 +57,17 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  # Applies migrations once, before the API and worker start. Never inside each API replica, where several would
+  # race. Before a deploy elsewhere: `docker compose run --rm migrate`.
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
   api:
     build: ./backend
     environment:
@@ -75,8 +86,8 @@ services:
       # A separate Redis database for the shared rate-limiter test.
       TEST_REDIS_URL: redis://redis:6379/15
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       supplier:
@@ -92,9 +103,10 @@ services:
     environment:
       <<: *app-env
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
-    # The API applies migrations on start; the worker waits for it.
     depends_on:
-      api:
+      migrate:
+        condition: service_completed_successfully
+      supplier:
         condition: service_healthy
     restart: unless-stopped
     stop_grace_period: 30s
