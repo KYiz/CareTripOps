@@ -1,191 +1,231 @@
-# CareTrip Ops V4.0 — Agentic Travel Service Platform for Seniors
+# CareTrip Ops — Agentic Travel Service Platform for Seniors
 
-**ZEIL Hackathon 2026 — Project** · Local demonstration · New Zealand scope
+**ZEIL Hackathon 2026 — Project** · New Zealand scope · **Demo video:** [CareTrip Ops walkthrough on YouTube](https://youtu.be/jF3KvJW-WAQ)
 
-**Demo video:** [Watch the CareTrip Ops walkthrough on YouTube](https://youtu.be/jF3KvJW-WAQ)
+CareTrip helps older travelers plan, verify and book trips, with family able to follow or help. The journey is
+request → clarification → supplier offers → evidence check → ranking → traveler approval → payment → booking →
+cancellation, plus a case-bound travel guide. The supplier is a **simulator** behind a real supplier interface, and
+payments are **simulated** unless Stripe keys are configured. All offers and accessibility evidence are synthetic.
 
-## Project overview
+## What it does
 
-CareTrip is an **Agentic Travel Service Platform for Seniors**. It currently demonstrates a B2C journey; supplier and travel-agency partnerships could later support B2B and B2B2C. Its intended advantage is controlled execution, supplier integration, evidence checks, and an auditable workflow that completes travel tasks. The target journey is request → planning → supplier discovery → verification → user authorization → booking execution → order management → live assistance. Today only the fixed Auckland package path can reach a **simulated** order. Supplier quotes and accessibility evidence are synthetic fixtures, not live travel data. There is no real inventory, reservation, payment, ticketing, identity system, or production authorization.
+- **Accounts and family.** Sign-in with a 6-digit code by email, or by text message once a mobile number is verified
+  (no password); HttpOnly session cookie. Each trip has an owner (the traveler) who can invite family as *viewer* or
+  *co-planner*, or **hand the trip over**: a daughter can plan for her mother, who then becomes the traveler and alone
+  approves and pays. Only the traveler approves, pays and cancels.
+- **Privacy and consent.** Terms and privacy notice (bilingual templates for legal review) accepted at first sign-in and
+  again when the version changes. Paying, cancelling and deleting the account need a code confirmed within 10 minutes
+  (step-up). Travelers can download all their data as JSON and delete their account (refused while a booking is
+  active; trips are redacted, booking records anonymized).
+- **Travel needs.** With separate consent, a traveler saves wheelchair use, walking limit, step-free access, accessible
+  bathroom, diet, medical notes and an emergency contact. New trips snapshot these needs (never the medical notes) and
+  every needed access claim (lift, step-free entry, accessible bathroom) must be proven per offer; walking limits and
+  diet shape the ranking. Withdrawing consent erases the details.
+- **Workflow.** A LangGraph workflow with PostgreSQL checkpoints: requirements (deterministic parser or Gemini/OpenAI),
+  clarification, an illustrative itinerary (optional Gemini Planner + Reviewer), supplier discovery, evidence
+  assessment, ranking, Manager arbitration, approval, payment and booking.
+- **Supplier.** `SupplierProvider` interface with an HTTP client (timeouts, retries, circuit breaker, idempotency keys).
+  The bundled simulator has packages for all six destinations (some with accessible airport transfers), inventory,
+  expiring holds, price changes, rejections and outages (fault injection).
+- **Evidence and advisors.** Each access claim of each offer is judged from independent sources (with source URL and
+  content hash); the weakest claim decides. Contradicted claims are blocked; inconclusive ones become one review per
+  claim in the **advisor console** (`/advisor`), which also lists help requests and every trip (read-only access,
+  booking and payment state, the traveler's needs with an audit record of each view, and advisor notes).
+- **Ranking.** Offers are scored on accessibility (35%), price (25%), walking pace (15%), cancellation flexibility (15%)
+  and rating (10%), plus meals (10%) when the traveler has dietary needs, with the reasons shown to the traveler.
+- **Payments and orders.** Stripe Checkout with a manual-capture hold: the card is captured only after the supplier
+  confirms, and released on any failure. Orders move PENDING_PAYMENT → CONFIRMED → CANCELLATION_REQUESTED → CANCELLED
+  (or FAILED). Refunds follow the cancellation policy stored in the approved offer snapshot.
+- **Trip companion.** Reminders to everyone on the trip a week and a day before departure (sent once each), a
+  large-print printable trip card, and a Help button that shows 111 and tells the family and advisors at once.
+- **Notifications.** An email outbox written in the same transaction as the event; the worker sends it with retries.
+- **Live updates.** PostgreSQL `NOTIFY` → server-sent events; the browser re-reads a trip only when it changes.
+- **Travel guide.** Text guide with deterministic rules and optional Gemini Live voice. Answers cite their sources:
+  the official page for a place, and the evidence records when asked about access at the chosen stay (it only repeats
+  verified claims). Travelers can rewrite the outline themselves or review guide-prepared drafts; neither changes an
+  offer, approval or order.
+- **For seniors.** English by default with a one-tap switch to Simplified Chinese (UI, guide replies, generated outlines,
+  emails; the choice is remembered), larger-text mode, 44px targets, WCAG 2.1 AA checked with axe in both languages.
 
-Each new Case returns a random access token. The browser stores it locally and sends it on Case requests; the server stores only its hash. A Case ID alone cannot access a newly created Case. This is a demo capability, not a traveler account or delegated Agent Permissions system. Cases created before migration `0004_case_access` have no token and require a new Case for browser access.
-
-## Key features
-
-- Four pages in one React application: a photo-led homepage, operations dashboard, traveler phone simulator, and side-by-side demo.
-- Plain-language Case creation, bounded clarification, New Zealand destination recognition, and local attributed destination photos.
-- A real LangGraph workflow with Manager arbitration, five worker responsibilities, conditional routing, PostgreSQL checkpoints, and human interrupts.
-- Synthetic Auckland A/C/B offer comparison: A is blocked on conflicting accessibility evidence, C needs review, and B can pass after one rerank and fresh verification.
-- Persisted approval before interruption; a matching approved snapshot can produce one simulated order, with database commit and read-back.
-- Shared Case ID plus a per-Case browser access token, typed REST client, polling, and backend-sourced audit events in both views. The daily outline is explicitly illustrative.
-- A case-bound text and optional Gemini Live voice guide, saved conversation turns, and reviewable illustrative itinerary revisions. Initial days can use separate Gemini Planner and Reviewer calls, with a labeled local outline if those calls fail. Current-container and browser acceptance remains pending.
-
-## Hackathon demo scope
-
-**One core demonstration:** the fixed Auckland request flows from requirements through synthetic offer evidence, Manager arbitration, human approval, one simulated order, and audit read-back. **Two supporting experiences:** (1) six-destination photo-led discovery with illustrative outlines, and (2) a case-bound companion with reviewable itinerary revisions. Gemini requirements and separate Planner/Reviewer structured calls passed bounded direct provider smoke tests; the rebuilt application workflow and Live voice path still require acceptance. Bonus eligibility is not inferred from source code alone.
-
-## System architecture
+## Architecture
 
 ```mermaid
 flowchart LR
-  WEB[React + TypeScript + Vite SPA] -->|/api/*| API[FastAPI + Pydantic]
-  API --> GRAPH[LangGraph Manager and Workers]
-  GRAPH --> SKILLS[Nine Python Skills]
-  SKILLS --> DB[(PostgreSQL business tables)]
-  GRAPH --> CP[(PostgreSQL checkpoints)]
+  WEB[React SPA] -->|/api + SSE| API[FastAPI]
+  API -->|enqueue with the state change| JOBS[(jobs)]
+  WORKER[worker] -->|claim SKIP LOCKED| JOBS
+  WORKER --> GRAPH[LangGraph workflow]
+  GRAPH --> SUP[supplier service]
+  GRAPH --> PAY[Stripe / simulated payments]
+  GRAPH --> DB[(PostgreSQL)]
   API --> DB
-  API --> GUIDE[Case-bound guide and revision graph]
-  GUIDE --> DB
-  GUIDE --> CP
+  DB -->|NOTIFY case_events| API
+  WORKER -->|outbox| MAIL[email]
+  API --> REDIS[(Redis: rate limits)]
+  PROM[Prometheus] -->|/metrics| API
 ```
 
-Nginx serves the SPA on port 8080 and proxies `/api/*` to one FastAPI service. PostgreSQL holds eight business tables plus checkpoint tables managed by `AsyncPostgresSaver`. There is no second backend or database for the phone view.
-The guide stores its manual selection and illustrative revision proposal in `cases.guide_state` (Alembic revision `0003_guide_state`). A separate revision graph uses the same PostgreSQL checkpointer and Case ID. It does not write offers, approvals, or orders. A revised daily outline remains unverified and is not part of the approved sample package or simulated order.
+Compose services: `db`, `redis`, `api`, `worker`, `supplier` (simulator), `stripe-mock` (tests only), `web` (Nginx on
+port 8080), and `e2e` (Playwright, only with `--profile e2e`).
+A partial unique index allows one queued or running job per trip. Workers heartbeat; a reaper fails runs whose worker
+disappeared and marks the trip `RECOVERY_REQUIRED` for an explicit resume. Supplier outages are retried with backoff.
+No database lock is held across a supplier or payment call; every external write carries a key derived from our IDs.
 
-## Agent workflow and Skills
+### Code map
 
-The constrained Manager routes five worker responsibilities: Requirements extracts and validates the request; Comparison discovers and ranks synthetic offers; Evidence assesses separate sources and aggregate verdicts; Booking checks approval and creates a simulated order; Review writes the completion summary and audit. Supplier discovery and approval waiting are additional graph nodes, not autonomous agents. Workers call nine typed Python Skills: `extract_requirements`, `validate_requirements`, `search_suppliers`, `compare_offers`, `verify_evidence`, `rerank_offers`, `prepare_approval`, `execute_mock_booking`, and `generate_review`.
-
-The graph branches on missing fields, no eligible offer, evidence conflict, and approval decision. It permits at most two clarifications and one rerank. Approval is saved before a side-effect-free interrupt; the API commits the decision before graph resume. A unique booking key and approval-order relation prevent duplicate simulated orders on replay. See [`backend/app/skills/SKILLS.md`](backend/app/skills/SKILLS.md) for executable contracts.
-The travel guide reads the same Case. Text questions use explicit deterministic rules; voice uses a server-side Gemini Live bridge when available. Text and voice turns are saved in `cases.guide_state`; voice clarification can populate the same requirements record. A separate LangGraph path proposes an illustrative revision without changing an offer, approval, or order. Package, cost, hotel, transport, and booking changes require a new Case and fresh verification. In Gemini API mode, initial itineraries and revisions use a Travel Planner call followed by a separate Travel Reviewer call. A third Planner call is used only for concrete review concerns. Both roles currently use the same configured Gemini model; they are separate calls, not autonomous agents. The result remains illustrative.
-
-## Tech stack
-
-React 19, TypeScript, Vite, Python 3.12, FastAPI, Pydantic v2, LangGraph, LangChain, Google Gen AI SDK, SQLAlchemy, Alembic, PostgreSQL 16, Nginx, Docker Compose, and Pytest.
+| Path | Contents |
+|---|---|
+| `backend/app/main.py` | App assembly: lifespan, middleware, error handling, `/metrics` |
+| `backend/app/api/` | Routers: `accounts`, `phone`, `privacy` (step-up, profile, export, deletion), `cases`, `bookings`, `companion`, `advisor`, `guide`, `voice` |
+| `backend/app/models/`, `database.py`, `db.py` | SQLAlchemy models by domain; `db.py` re-exports them with shared helpers |
+| `backend/app/workflow/` | LangGraph nodes: `planning`, `offers`, `checkout`; `app/graph.py` wires them |
+| `backend/app/booking.py`, `payments.py`, `suppliers.py` | Order lifecycle, Stripe/simulated payments, supplier client |
+| `backend/app/auth.py`, `members.py`, `privacy.py`, `sms.py` | Codes, sessions, step-up and roles; family sharing and handover; export and deletion; text messages |
+| `backend/app/reviews.py`, `advisors.py`, `companion.py` | Advisor reviews, the advisor console, reminders, trip card and help |
+| `backend/app/clarification.py`, `guide.py`, `case_state.py` | Missing details, travel guide with citations, itinerary versions and edits |
+| `backend/app/jobs.py`, `worker.py`, `events.py`, `notify.py`, `ratelimit.py`, `metrics.py` | Job queue, worker, live updates, email outbox, rate limits, Prometheus |
+| `backend/app/skills/` | Typed skills (see `SKILLS.md`) |
+| `backend/supplier_sim/` | The supplier simulator and its catalog |
+| `frontend/src/hooks/` | Session, live trip snapshot, trip list, step-up confirmation |
+| `frontend/src/components/` | Pages and panels; `guide/`, `dashboard/`, `phone/` hold their parts |
+| `frontend/src/locales/zh.ts`, `legal.ts` | Chinese text (`tests/i18n.test.mjs` checks every UI string); terms and privacy templates |
+| `e2e/` | Playwright journeys and axe checks, run in the Playwright container |
+| `scripts/backup.sh`, `scripts/restore.sh` | Database backup and verified restore |
 
 ## Getting started
 
-### Prerequisites
+Requires Docker Desktop. From the project root:
 
-- Docker Desktop with Compose and a working engine, configured by the operator. The PostgreSQL service uses a named volume.
-- For non-container development: Python 3.10+, PostgreSQL 16, Node.js 22, and npm or pnpm.
-- Docker must be available in the operator's PowerShell session. It was unavailable in the audit shell, so the current source build has not been deployed or verified there.
-
-### Environment setup
-
-Copy `.env.example` to `.env` and keep it local. `MODEL_MODE=mock_llm` is the deterministic default in a fresh checkout. A local demonstration `.env` may set `MODEL_MODE=api`; inspect `/api/readyz` and each Case's `model_status` to confirm the running image. The synthetic catalog and evidence are always labeled. `DEMO_NONCE_SECRET` is a demo-only token derivation secret; set a stable local value if cases must remain actionable after an API restart.
-
-For live requirements extraction, set `MODEL_MODE=api` and `LLM_PROVIDER=gemini` with a server-side `GEMINI_API_KEY`, or use `LLM_PROVIDER=openai` with `OPENAI_API_KEY` and `MODEL_NAME`. The Gemini adapter uses the official `google-genai` SDK, validates structured output, and normalizes NZD before persistence. The OpenAI adapter uses LangChain. Provider errors do not silently become successful mock calls. The limit is seven attempted calls per Case to cover requirements, initial Planner/Reviewer, and one reviewed revision. Provider token usage is recorded only when returned. One direct Gemini requirements call on the current adapter succeeded with Queenstown, three travelers, three days, and NZD 1,000. No browser bundle contains an API key.
-
-`GEMINI_API_KEY` may be stored in the project-root `.env` and is passed only to the API container. The optional Gemini Live bridge connects after the traveler starts voice mode and grants microphone access. It relays PCM through FastAPI and declares a read-only `get_current_trip` function tool. Its provider connection, microphone capture, audio playback, and browser behavior have **not** been tested. The voice button is hidden when the API reports no key. `GEMINI_LIVE_MODEL` is separate from the `gemini-3.8-flash` text model. Planner and Reviewer schemas and backend validators passed a direct two-call provider smoke test; the complete database-backed graph path remains untested in the rebuilt image.
-
-### Docker start and stop — operator commands
-
-Run these commands in PowerShell at the project root. Container lifecycle operations are performed by the operator, not by the coding assistant.
-
-```powershell
-docker compose config
+```bash
+cp .env.example .env
 docker compose up --build -d
-docker compose ps
-docker compose logs api
-docker compose down
 ```
 
-Do not use `down -v` for normal shutdown: it removes the named PostgreSQL volume. The app is intended at `http://localhost:8080`; API documentation is at `http://localhost:8080/api/docs`. The shipped Nginx proxy handles `/api/*`, `/healthz`, and `/readyz`.
+Open http://localhost:8080, sign in with any email (in development the code is shown on the page and printed in the
+API log), and plan the sample Auckland trip. API docs: http://localhost:8080/api/docs (disabled in production).
+`docker compose down` stops everything; `down -v` also deletes the database volume.
 
-### Database migration
+To try the advisor console, set `ADVISOR_EMAILS=you@example.com` in `.env`, restart, and sign in with that address.
+To sign in by text, add a mobile number on the Account page; in development the code is shown on the page.
 
-The API container runs `alembic upgrade head` before Uvicorn. For an external local PostgreSQL, set `DATABASE_URL` and run from `backend/`:
+### Using real Stripe test keys
 
-```powershell
-alembic upgrade head
-uvicorn app.main:app --reload
-```
+1. In the Stripe dashboard (test mode) copy the secret key, then set in `.env`:
+   `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY=sk_test_...`.
+2. Forward webhooks with the Stripe CLI and copy the `whsec_...` it prints into `STRIPE_WEBHOOK_SECRET`:
+   `stripe listen --forward-to localhost:8080/api/payments/stripe/webhook`
+3. `docker compose up -d`, then check the configuration: `docker compose exec api python -m app.payments`
+4. Book a trip, choose *Pay securely with Stripe*, and pay with the test card `4242 4242 4242 4242`. The card is held,
+   then captured once the supplier confirms; cancelling refunds according to the offer's policy.
 
-`AsyncPostgresSaver.setup()` runs on API startup and manages its own checkpoint tables. Alembic owns eight business tables. Offer quote columns have a database trigger preventing mutation; approval and order uniqueness are database enforced. Run `alembic upgrade head` before starting the updated API. Migrations `0003` and `0004` check for existing Case columns because the initial migration uses current SQLAlchemy metadata. Fresh and previously migrated databases still require PostgreSQL migration acceptance before this version is presented as ready.
+Returning from Checkout triggers a payment check even without the webhook, but production requires it.
 
-## Environment variables
+### Live models (optional)
+
+`MODEL_MODE=api` with `LLM_PROVIDER=gemini` and `GEMINI_API_KEY` (or `openai` with `OPENAI_API_KEY`) enables model
+requirement extraction; `GEMINI_PLANNING_ENABLED=true` adds the Planner/Reviewer itinerary. Provider errors never fall
+back to mock output, and each trip allows at most `MAX_LLM_CALLS_PER_CASE` calls. Gemini Live voice appears only when a
+key is configured; it has not been tested against the real provider.
+
+## Configuration
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection for the API and migrations | Compose sets the internal database address |
-| `MODEL_MODE` | `mock_llm` deterministic parser or `api` live requirements adapter | `mock_llm` |
-| `LLM_PROVIDER` | Requirements provider in `api` mode: `gemini` or `openai` | `gemini` |
-| `GEMINI_REQUIREMENTS_MODEL` | Gemini model for requirements extraction | `gemini-3.8-flash` |
-| `MODEL_NAME` | OpenAI model name for `api` mode | `gpt-4o-mini` |
-| `OPENAI_API_KEY` | Server-side key for `api` mode | Empty |
-| `GEMINI_API_KEY` | Server-side key for Gemini requirements, optional Live voice and planning | Empty |
-| `GEMINI_LIVE_MODEL` | Configurable Gemini Live audio model | `gemini-3.8-live` |
-| `MAX_LIVE_SESSIONS_PER_CASE` | Maximum manually started voice sessions per Case | `2` |
-| `GEMINI_PLANNING_ENABLED` | Enable initial and revision Planner/Reviewer calls in API mode | `true` in Compose; disabled if unset outside Compose |
-| `GEMINI_PLANNER_MODEL`, `GEMINI_REVIEWER_MODEL` | Models for the two planning roles | `gemini-3.8-flash` |
-| `FRONTEND_ORIGIN` | Allowed browser origin for the Live WebSocket | `http://localhost:8080` |
-| `DEMO_NONCE_SECRET` | Stable demo approval nonce derivation | Local demo value; replace for a persistent local session |
-| `MAX_LLM_CALLS_PER_CASE` | Maximum attempted model calls | `7` |
-| `MAX_RERANKS` | Maximum Manager reranks | `1` |
-| `MAX_CLARIFICATIONS` | Maximum clarification rounds | `2` |
+| `APP_ENV` | `production` refuses to start with demo secrets, console email or SMS, simulated payments, the in-process supplier or no Redis, and disables `/api/docs` | `development` |
+| `DATABASE_URL` | PostgreSQL connection | set by Compose |
+| `REDIS_URL` | Shared rate limits across API processes (per process when empty) | Compose: `redis://redis:6379/0` |
+| `AUTH_SECRET`, `DEMO_NONCE_SECRET` | Hash pepper for codes/sessions; approval nonce secret (32+ chars in production) | local values |
+| `AUTH_DEV_RETURN_CODE` | Show sign-in codes on the page (development only) | `true` |
+| `SESSION_DAYS`, `LOGIN_CODE_MINUTES`, `STEP_UP_MINUTES` | Session and code lifetimes; how recent a confirmation must be for paying, cancelling and deleting | `30`, `10`, `10` |
+| `LOGIN_CODE_LIMIT_PER_EMAIL_PER_HOUR`, `LOGIN_CODE_LIMIT_PER_IP_PER_HOUR` | Sign-in code rate limits | `5`, `30` |
+| `CASE_CREATE_LIMIT_PER_IP_PER_HOUR`, `CASE_CREATE_LIMIT_GLOBAL_PER_HOUR` | New trips per hour; with the per-trip model call limit this caps model spend | `30`, `300` |
+| `EMAIL_BACKEND`, `EMAIL_FROM`, `SMTP_*` | `console` (development) or `smtp` | `console` |
+| `SMS_BACKEND`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Text-message codes: `off`, `console` (development) or `twilio` | `console` |
+| `SUPPLIER_BASE_URL`, `SUPPLIER_API_KEY` | Supplier endpoint; empty runs the simulator in-process | Compose: `http://supplier:9000` |
+| `PAYMENT_PROVIDER`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `simulated` or `stripe` | `simulated` |
+| `ADVISOR_EMAILS` | Comma-separated emails of travel advisors | empty |
+| `SUPPORT_PHONE` | Shown on trip cards and the Help screen | empty |
+| `METRICS_TOKEN` | Bearer token for `/metrics` | empty |
+| `EMBEDDED_WORKER`, `WORKER_CONCURRENCY`, `WORKER_POLL_SECONDS` | Run workflows inside the API (single-process dev); worker tuning | `true` (Compose: `false`), `4`, `0.5` |
+| `TRUST_PROXY` | Trust Nginx's `X-Real-IP` for rate limits | `true` in Compose |
+| `LOG_FORMAT`, `LOG_LEVEL`, `SENTRY_DSN` | `json` or `console` logs; optional Sentry | `json`, `INFO` |
+| `MODEL_MODE`, `LLM_PROVIDER`, `GEMINI_*`, `OPENAI_API_KEY`, `MODEL_NAME` | Optional live models (see above) | `mock_llm` |
+| `MAX_LLM_CALLS_PER_CASE`, `MAX_RERANKS`, `MAX_CLARIFICATIONS`, `MAX_LIVE_SESSIONS_PER_CASE` | Workflow bounds | `7`, `1`, `2`, `2` |
+| `FRONTEND_ORIGIN` | Public site origin (Checkout return URLs, voice origin check) | `http://localhost:8080` |
 
-Keep `.env` local and never commit keys. `MODEL_MODE=mock_llm` does not call a model.
-The case API reports the configured provider and a separate `MOCK`, `PENDING`, `SUCCEEDED`, or `FAILED` requirements-call status; a configured key alone never counts as a successful call. Daily itinerary source is separately labeled `GEMINI_REVIEWED`, `GEMINI_FAILED`, or `DETERMINISTIC_DRAFT`.
+## Pages and API
 
-## Application pages
+Pages: `/` home, `/mobile` traveler view, `/dashboard` operations view, `/demo` both side by side, `/trip-card`
+printable trip card (these take `?caseId=`), `/account` details, needs, data and deletion, `/advisor` advisor console,
+`/terms` and `/privacy`.
 
-- `/` — travel homepage with Case intake, six destinations, style filters, companion introduction, and a clearly labeled demo partner concept. Destination cards submit a Case; non-Auckland destinations have illustrative outlines but no synthetic verified package. Experience cards prefill an editable request.
-- `/dashboard` — operations workspace with requirements, offer snapshots, evidence, Manager decisions, recovery control, and backend audit timeline.
-- `/mobile` — browser-based phone simulator with Explore, My Trips, AI Guide, and Help. Explore cards create a destination-specific Case. My Trips lists Case IDs saved in this browser and loads each Case from the API; it is not a server-wide account history. The view includes text intake, illustrative day revisions, a final verified offer, approval/rejection, and backend-confirmed simulated result. It is **not** a native app.
-- `/demo` — dashboard and phone together, sharing one Case ID and API client.
+API (all JSON as `{data, request_id}` or `{error: {code, message, retryable}, request_id}`; every response carries
+`X-Request-ID`):
 
-All paths use port 8080. Nginx serves the SPA entry point for direct navigation and page refresh.
+- Auth: `POST /api/auth/request-code` and `/verify` (email or phone), `/logout`; `GET`/`PATCH /api/auth/me`;
+  `POST /api/auth/step-up/request`, `/step-up/verify`; `PUT`/`DELETE /api/auth/me/phone`, `POST /api/auth/me/phone/verify`
+- Privacy: `PUT /api/auth/me/consent`, `GET`/`PUT /api/profile`, `GET /api/auth/me/export`, `DELETE /api/auth/me`
+- Trips: `GET`/`POST /api/cases`, `GET /api/cases/{id}`, `/offers`, `/evidence`, `/approvals`, `/orders`, `/events`,
+  `GET /stream` (server-sent events), `POST /clarifications`, `/resume`, `/approvals/{id}/decision`,
+  `PUT /itinerary`, `GET /trip-card`, `POST /help`
+- Payments and orders: `POST /api/cases/{id}/payments/sync`, `POST /api/cases/{id}/orders/{orderId}/cancel`,
+  `POST /api/payments/stripe/webhook`
+- Family: `GET /api/cases/{id}/members`, `POST /invitations` (`VIEWER`, `CO_PLANNER` or `OWNER` to hand over),
+  `DELETE /invitations/{id}`, `DELETE /members/{userId}`; `GET /api/invitations`, `POST /api/invitations/{id}`
+- Advisors: `GET /api/advisor/reviews`, `POST /api/advisor/reviews/{id}`, `GET /api/advisor/help`,
+  `POST /api/advisor/help/{id}`, `GET /api/advisor/cases`, `GET /api/advisor/cases/{id}/traveler`,
+  `GET`/`POST /api/advisor/cases/{id}/notes`
+- Guide: `GET /api/cases/{id}/guide`, `POST /guide/attraction`, `/guide/messages`, `/guide/revisions`,
+  `/guide/revisions/decision`; `WS /api/cases/{id}/guide/live`
+- Operations: `/healthz`, `/readyz`, `/metrics` (internal network only)
 
-## API documentation
+Reads need membership (`VIEWER`), or an advisor reading; planning actions `CO_PLANNER`; approve, pay, cancel and manage
+members `OWNER`. Non-members get `404`. Cross-site writes are rejected.
 
-- `POST /api/cases`, `GET /api/cases/{caseId}`
-- `POST /api/cases/{caseId}/clarifications`
-- `GET /api/cases/{caseId}/offers`, `/evidence`, `/approvals`, `/orders`, `/events`
-- `POST /api/cases/{caseId}/approvals/{approvalId}/decision`
-- `POST /api/cases/{caseId}/resume` for explicit recovery after an interrupted run
-- `GET /api/cases/{caseId}/guide`, `POST /guide/attraction`, `/guide/messages`, `/guide/revisions`, and `/guide/revisions/decision` for case-bound guide work
-- `GET /api/guide/capabilities`; optional `WS /api/cases/{caseId}/guide/live` for server-mediated Gemini Live audio
-- `GET /healthz`, `/readyz`, `/api/readyz`
+## Operations
 
-Success bodies use `{ "data": ..., "request_id": "..." }`; business errors use `{ "error": { "code", "message", "retryable" }, "request_id" }`. Money is serialized as a string. Case routes require `X-Case-Token`; the Live Guide WebSocket receives the token in a WebSocket subprotocol. The approval endpoint validates a demo nonce, state version, snapshot version, amount, currency, quote expiry, and PASS assessment. Plan review and execution approval are distinct UI steps. These controls do not authenticate a real traveler or establish production consent.
-
-## Demo walkthrough
-
-1. Open `/dashboard`, `/mobile`, or `/demo`. Use the sample Auckland request for three travelers, three days, NZD 1,000, lift access, and an explicit departure date. Create a Case.
-2. Observe A at NZD 820 as a preliminary offer. Synthetic evidence marks A BLOCK due to stairs, C at NZD 880 REVIEW due to missing coverage, and B at NZD 920 PASS after Manager reranking.
-3. The phone view displays only final PASS B for approval. Approve or reject with the demo controls. Approval is persisted before the graph resumes.
-4. The dashboard and phone poll the same case every 1.5 seconds using the browser's Case token. On approval, a single simulated order appears after database read-back. On rejection, no order appears. A Case link opened in another browser without the token is denied.
-5. In Mobile, open AI Guide to select a listed stop, ask about the next idea, or request a gentler illustrative draft. The revision does not modify the verified offer or simulated order.
-6. Refresh `/demo?caseId=<uuid>` or switch to `/dashboard?caseId=<uuid>` and `/mobile?caseId=<uuid>` to read the same persisted Case.
+- **Backups.** `scripts/backup.sh` writes a compressed `pg_dump` to `backups/` and keeps the newest 14.
+  `scripts/restore.sh --check <dump>` restores it into a scratch database, compares row counts and drops it;
+  `scripts/restore.sh <dump> <new_db>` restores for real, never over the live database. Copy dumps off the machine.
+- **Metrics.** Prometheus scrapes `api:8000/metrics`: request counts and latency per route template, workflow runs by
+  status and the oldest queued run's age, unsent and failed emails, trips and orders by status, open reviews and
+  unanswered help requests. Alert on help requests and queue age first.
+- **Logs.** JSON lines with `request_id`, `user_id` and `case_id`; optional Sentry.
 
 ## Testing
 
-From `frontend/`, run:
-
-```powershell
-npm run build
-node --experimental-strip-types --test tests/photoLibrary.test.mjs tests/routes.test.mjs tests/caseAccess.test.mjs
+```bash
+docker compose exec api pytest -q        # backend, uses its own caretrip_test database
+docker compose exec api alembic check     # models and migrations agree
+docker compose --profile e2e run --rm e2e # browser journeys and axe checks against the running stack
 ```
 
-After the operator starts Compose and the API is healthy, run:
+Frontend (Node 22): `npm run build` and `node --experimental-strip-types --test tests/*.test.mjs` in `frontend/`.
+The advisor journey in `e2e` runs when `ADVISOR_EMAILS` (API) and `E2E_ADVISOR_EMAIL` (e2e) name the same address;
+raise `LOGIN_CODE_LIMIT_PER_IP_PER_HOUR` for repeated local runs, since every test signs in from one address.
 
-```powershell
-docker compose exec api pytest -q
-```
+Backend tests are hermetic: the supplier simulator runs in-process and payments are simulated or faked; the Stripe
+client is contract-tested against `stripe-mock` and the shared limiter against Redis. Current results: 178 backend
+tests, 15 frontend tests (including a check that every UI string has a Chinese translation) and 21 browser tests
+(desktop and phone, with WCAG 2.1 AA axe checks of every page in English and Chinese) pass.
+`.github/workflows/ci.yml` runs migrations (with a downgrade/upgrade round trip), `alembic check`, all three suites,
+the image builds and `nginx -t`.
 
-PostgreSQL integration tests require a migrated database. In the latest local check, Python compilation, TypeScript checking, and nine frontend source tests passed. The current shell has no usable backend pytest environment or Docker command, PostgreSQL and web ports are closed, and the Vite build hit a Windows `realpath EPERM` error. The new Case-token, WebSocket, recovery, and five-Case database tests and the complete rebuilt graph path have therefore **not** been run. Earlier results in [`docs/FINAL_ACCEPTANCE_REPORT.md`](docs/FINAL_ACCEPTANCE_REPORT.md) predate these changes and do not establish acceptance of the current source.
+## Limitations
 
-## Current limitations
+- The supplier and its accessibility evidence are synthetic. Real suppliers need a partner account and a
+  `SupplierProvider` implementation.
+- Real Stripe has been verified only against `stripe-mock` and the self-check; a full test-card payment needs your keys.
+  Twilio text messages have not been sent for real; console mode was used.
+- The terms and privacy notice are templates that a New Zealand lawyer must review and complete before launch.
+- A handover keeps the needs the trip was planned with when the new traveler has none saved; if theirs differ after
+  offers were checked, the trip goes to a person rather than re-planning automatically.
+- Gemini Live voice is untested with the real provider. Illustrative itineraries can still contain model mistakes;
+  only the offer path is evidence-gated.
 
-The verified offer path serves only the fixed Auckland three-traveler, three-day synthetic package scenario. Six New Zealand destinations can be recognized and photographed, but the other five provide illustrative itinerary ideas without verified supplier packages. Initial days are Gemini reviewed only when the Case reports `GEMINI_REVIEWED`; otherwise they are explicitly labeled local outlines or provider failures. Even Gemini output is an illustrative plan, not a verified route. Photos support presentation and do not prove prices, accessibility, opening hours, or inventory.
+## Credits
 
-This is a single-process local PoC using polling, one demo actor, and no distributed task queue. An API restart marks active nonterminal cases `RECOVERY_REQUIRED`; the explicit resume endpoint uses the PostgreSQL checkpoint where possible. The per-Case token and approval nonce are demo controls, not customer identity, delegation, revocation, or production consent. No exactly-once guarantee is claimed across a database or checkpoint outage. The journey map is a manual itinerary sequence, not GPS or route guidance. Gemini Live audio, microphone behavior, and the complete rebuilt graph path remain unverified. There is no real booking, payment, commercial partnership, or image generation. Evidence rules gate the synthetic offer path; they cannot eliminate model hallucinations in illustrative prose.
-
-## Bonus challenge evidence
-
-Current source/build evidence does **not** establish bonus eligibility. Live voice, function calling, and Planner/Reviewer collaboration require successful provider and browser tests. Strict Shapes requires real schema output evidence. The opt-in evaluation harness contains ten New Zealand cases and a before/after scorer, but it has **not** made real model calls or produced results. It requires 30 calls for a full run, so the operator should check quota before using `docker compose exec api python -m evals.itinerary_eval --confirm-live`. Break It, Fix It has unit-level error and idempotency checks but requires a current fault-injection demonstration. Grounded needs authoritative clickable citations; the synthetic supplier evidence and local photo attribution do not by themselves satisfy that requirement.
-
-## What you didn't write
-
-This iteration used OpenAI Codex as a coding assistant. React, Vite, FastAPI, LangGraph, SQLAlchemy, Alembic, PostgreSQL, Nginx, Google Gen AI SDK, and their dependencies are third-party software. Destination photographs come from Wikimedia Commons under the licenses and attribution recorded in `docs/DESTINATION_IMAGE_TRACEABILITY.md`. The V3.2 review package and reference images supplied by the project owner guided the product design. The maintainer should add any other tools or external contributions used outside this iteration before submission.
-
-## Future roadmap
-
-- Complete live-provider, microphone, WebSocket, and container acceptance for the new guide before presenting it as a working real-time service.
-- Expand accessible New Zealand supplier fixtures, then integrate real travel APIs only with source, availability, and contract checks.
-- Consider GPS with explicit consent, map-backed routes, a travel-card export, and real commercial partner content after the current workflow is verified.
-- Explore online photo retrieval, multimodal guidance, and commercial distribution as later stages; none are present in this build.
-
-The project design derives from the historical CareTrip Ops proposal and is governed by the V3.2 review package under `CareTrip_Final_Review_Package/`.
-
+React, Vite, FastAPI, LangGraph, SQLAlchemy, Alembic, PostgreSQL, Nginx, Stripe and Google Gen AI SDKs are third-party
+software. Destination photos come from Wikimedia Commons (see `docs/DESTINATION_IMAGE_TRACEABILITY.md`). Earlier
+iterations used OpenAI Codex; later ones used Claude Code. The design derives from the V3.2 review package in
+`CareTrip_Final_Review_Package/`.

@@ -7,10 +7,11 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
 
-from app.db import Case, Requirement, SessionLocal, add_event
-from app.skills.contracts import DraftPlanInput
-from app.skills.domain import build_draft_itinerary
-from app.skills.destinations import ATTRACTION_CATALOG
+from app import case_state
+from app.db import (Approval, Case, Evidence, ItineraryProposal, Offer, Order, Requirement, SessionLocal, add_event,
+                    latest_claims)
+from app.skills.destinations import ATTRACTION_CATALOG, local_name
+from app.guide_text import CLAIM_NAMES, GENTLER_NOTE, classify_intent, reply_text
 from app.two_brains import planning_enabled, review_itinerary
 
 
@@ -23,17 +24,10 @@ class RevisionState(TypedDict, total=False):
     model_trace: dict
 
 
-def draft_days(requirement: Requirement) -> list[dict]:
-    return [day.model_dump() for day in build_draft_itinerary(DraftPlanInput(
-        destination=requirement.destination, destination_scope=requirement.destination_scope,
-        duration_days=requirement.duration_days, attractions=requirement.attractions,
-        travel_pace=requirement.travel_pace))]
-
-
 def available_attractions(requirement: Requirement) -> list[str]:
     return list(dict.fromkeys([*requirement.attractions,
                                *ATTRACTION_CATALOG.get(requirement.destination or "", {}),
-                               *(day["attraction"] for day in draft_days(requirement) if day["attraction"])]))
+                               *(day["attraction"] for day in case_state.draft_days(requirement) if day["attraction"])]))
 
 
 def guide_context(case_id: str) -> dict:
@@ -42,12 +36,12 @@ def guide_context(case_id: str) -> dict:
         if not case:
             raise LookupError("Case not found")
         requirement = session.scalar(select(Requirement).where(Requirement.case_id == case_id))
-        state = case.guide_state or {}
+        itinerary = case_state.current_itinerary(session, case_id)
         attractions = available_attractions(requirement) if requirement else []
-        selected = state.get("selected_attraction")
+        selected = case.selected_attraction
         if selected not in attractions:
             selected = attractions[0] if attractions else None
-        pending_plan = bool(requirement and not requirement.missing_fields and not state.get("initial_days")
+        pending_plan = bool(requirement and not requirement.missing_fields and not itinerary
                             and planning_enabled() and case.status not in {"HUMAN_REVIEW", "RECOVERY_REQUIRED", "REJECTED"})
         return {
             "case_id": case_id, "case_status": case.status,
@@ -55,19 +49,40 @@ def guide_context(case_id: str) -> dict:
             "travel_pace": requirement.travel_pace if requirement else None,
             "traveler_count": requirement.traveler_count if requirement else None,
             "elevator_required": bool(requirement.hard_constraints.get("elevator_required")) if requirement else False,
+            "access_needs": case_state.access_needs(requirement),
             "attractions": attractions, "selected_attraction": selected,
-            "days": [] if pending_plan else state.get("accepted_days") or state.get("initial_days") or (draft_days(requirement) if requirement else []),
-            "proposal": state.get("proposal"),
-            "itinerary_source": "PENDING" if pending_plan else state.get("itinerary_source", "DETERMINISTIC_DRAFT"),
-            "itinerary_version": state.get("itinerary_version", 0),
+            "days": [] if pending_plan else itinerary.days if itinerary else (case_state.draft_days(requirement, case.language, case.original_request) if requirement else []),
+            "proposal": case_state.proposal_payload(case_state.latest_proposal(session, case_id)),
+            "itinerary_source": "PENDING" if pending_plan else itinerary.source if itinerary else "DETERMINISTIC_DRAFT",
+            "itinerary_version": itinerary.version if itinerary else 0,
             "budget": str(requirement.budget) if requirement and requirement.budget else None,
             "currency": requirement.currency if requirement else None,
             "place_sources": {name: item["source_url"] for name, item in
                               ATTRACTION_CATALOG.get(requirement.destination or "", {}).items()} if requirement else {},
-            "conversation": state.get("conversation", []),
+            "conversation": case_state.conversation(session, case_id),
+            "stay": chosen_stay(session, case_id),
             "missing_fields": requirement.missing_fields if requirement else [],
-            "location_mode": "MANUAL", "source": "CASE_REQUIREMENTS",
+            "location_mode": "MANUAL", "source": "CASE_REQUIREMENTS", "language": case.language,
         }
+
+
+def chosen_stay(session, case_id: str) -> dict | None:
+    """The booked offer, or the one waiting for approval, with what was verified and the evidence behind it."""
+    offer_id = session.scalar(select(Order.offer_id).where(Order.case_id == case_id, Order.status == "CONFIRMED")
+                              .order_by(Order.created_at.desc()).limit(1)) or \
+        session.scalar(select(Approval.offer_id).where(Approval.case_id == case_id,
+                                                       Approval.status.in_(("PENDING", "APPROVED")))
+                       .order_by(Approval.created_at.desc()).limit(1))
+    offer = offer_id and session.get(Offer, offer_id)
+    if not offer:
+        return None
+    verified = [claim for claim, row in latest_claims(session, offer.id).items() if row.verdict == "PASS"]
+    evidence = session.scalars(select(Evidence).where(Evidence.offer_id == offer.id, Evidence.claim_type.in_(verified),
+                                                      Evidence.polarity == "SUPPORT")
+                               .order_by(Evidence.source_reference)).all()
+    return {"name": offer.name or offer.catalog_product_id, "verified_claims": verified,
+            "evidence": [{"claim": e.claim_type, "reference": e.source_reference, "detail": e.detail, "url": e.source_url}
+                         for e in evidence]}
 
 
 def select_attraction(case_id: str, attraction: str) -> dict:
@@ -78,7 +93,7 @@ def select_attraction(case_id: str, attraction: str) -> dict:
         requirement = session.scalar(select(Requirement).where(Requirement.case_id == case_id))
         if not requirement or attraction not in available_attractions(requirement):
             raise ValueError("Select an attraction already present in this trip")
-        case.guide_state = {**(case.guide_state or {}), "selected_attraction": attraction}
+        case.selected_attraction = attraction
         add_event(session, case_id, "Travel Guide", "ATTRACTION_SELECTED", case.status,
                   {"attraction": attraction, "location_mode": "MANUAL"})
     return guide_context(case_id)
@@ -91,53 +106,59 @@ def record_guide_turn(case_id: str, role: str, text: str, source: str) -> None:
         case = session.get(Case, case_id, with_for_update=True)
         if not case:
             raise LookupError("Case not found")
-        previous = case.guide_state or {}
-        conversation = list(previous.get("conversation", []))[-29:]
-        conversation.append({"role": role, "text": text[:1000], "source": source,
-                             "created_at": datetime.now(timezone.utc).isoformat()})
-        case.guide_state = {**previous, "conversation": conversation}
+        case_state.add_turn(session, case_id, role, text, source)
         add_event(session, case_id, "Travel Guide", "GUIDE_TURN_SAVED", case.status,
                   {"role": role, "source": source, "length": min(len(text), 1000)})
 
 
-def classify_intent(message: str) -> str:
-    lowered = message.casefold()
-    if any(word in lowered for word in ("hotel", "accommodation", "price", "budget", "package", "booking", "payment", "transport", "cheaper")):
-        return "PACKAGE_CHANGE"
-    if any(word in lowered for word in ("change", "adjust", "skip", "tired", "rest", "slower", "too much", "modify")):
-        return "REVISION"
-    if any(word in lowered for word in ("next", "after this", "following")):
-        return "NEXT_ACTIVITY"
-    return "ATTRACTION_QUESTION"
-
-
-def guide_answer(context: dict, message: str) -> dict:
+def guide_answer(context: dict, message: str, lang: str = "en") -> dict:
     intent = classify_intent(message)
     if intent == "PACKAGE_CHANGE":
-        return {"intent": intent, "reply": "A change to price, hotel, transport or package needs a new trip request and fresh verification. Your current approved offer and booking remain unchanged.",
-                "model_mode": "deterministic", "citations": []}
+        return {"intent": intent, "reply": reply_text(lang, "package"), "model_mode": "deterministic", "citations": []}
     if intent == "REVISION":
-        return {"intent": intent, "reply": "I can prepare a gentler draft for you to review. This will not change a verified offer or booking.",
-                "model_mode": "deterministic", "citations": []}
-    if not context["destination"]:
-        reply = "Start by telling us about your New Zealand trip. I can then use your trip details here."
+        return {"intent": intent, "reply": reply_text(lang, "revision"), "model_mode": "deterministic", "citations": []}
+    sources = context.get("place_sources", {})
+
+    def place_citation(place: str | None) -> list[dict]:
+        return [{"kind": "PLACE", "title": local_name(place, lang), "url": sources[place]}] if place in sources else []
+
+    citations: list[dict] = []
+    if intent == "ACCESS_QUESTION":
+        reply, citations = _access_answer(context.get("stay"), lang)
+    elif not context["destination"]:
+        reply = reply_text(lang, "no_trip")
     elif intent == "NEXT_ACTIVITY":
         days = context["days"]
         selected = context["selected_attraction"]
         index = next((i for i, day in enumerate(days) if day["attraction"] == selected), -1)
         following = next((day for day in days[index + 1:] if day["attraction"]), None)
-        reply = (f"Your illustrative next stop is {following['attraction']}. Consider a rest before continuing."
-                 if following else "There is no further attraction in this illustrative outline. You can take a break.")
+        reply = (reply_text(lang, "next", place=local_name(following["attraction"], lang)) if following
+                 else reply_text(lang, "no_next"))
+        citations = place_citation(following["attraction"]) if following else []
     else:
         selected = context["selected_attraction"]
-        reply = (f"{selected} is listed in your {context['destination']} trip idea. I can help you review the next step or request a gentler draft. Visit details have not been verified."
-                 if selected else f"Your {context['destination']} trip is taking shape. Choose an attraction to ask about it.")
-    return {"intent": intent, "reply": reply, "model_mode": "deterministic", "citations": []}
+        destination = local_name(context["destination"], lang)
+        reply = (reply_text(lang, "place", place=local_name(selected, lang), destination=destination) if selected
+                 else reply_text(lang, "no_place", destination=destination))
+        citations = place_citation(selected)
+    return {"intent": intent, "reply": reply, "model_mode": "deterministic", "citations": citations}
+
+
+def _access_answer(stay: dict | None, lang: str) -> tuple[str, list[dict]]:
+    """Only what was verified for the chosen stay, each fact with the evidence behind it; never a guess."""
+    if not stay:
+        return reply_text(lang, "access_none"), []
+    claims = [CLAIM_NAMES[lang][claim] for claim in stay["verified_claims"] if claim in CLAIM_NAMES[lang]]
+    if not claims:
+        return reply_text(lang, "access_no_need", stay=stay["name"]), []
+    joiner = "、" if lang == "zh" else ", "
+    citations = [{"kind": "EVIDENCE", "title": f"{item['reference']}: {item['detail']}", "url": item["url"]}
+                 for item in stay["evidence"]]
+    return reply_text(lang, "access", stay=stay["name"], claims=joiner.join(claims)), citations
 
 
 async def _prepare_revision(state: RevisionState) -> RevisionState:
-    if any(term in state["request"].casefold() for term in
-           ("hotel", "accommodation", "price", "budget", "package", "booking", "payment", "transport")):
+    if classify_intent(state["request"]) == "PACKAGE_CHANGE":
         return {"error": "Package or cost changes need a new verified proposal and human review"}
     context = guide_context(state["case_id"])
     if not context["days"]:
@@ -145,10 +166,10 @@ async def _prepare_revision(state: RevisionState) -> RevisionState:
     days = [dict(day) for day in context["days"]]
     selected = context["selected_attraction"]
     target = next((day for day in days if day["attraction"] == selected), days[0])
-    target["note"] = "Gentler draft: leave time for a rest before this activity. Timing and availability require confirmation."
+    target["note"] = GENTLER_NOTE[context["language"]]
     if planning_enabled():
         try:
-            revised, trace = await review_itinerary(state["case_id"], state["request"], context)
+            revised, trace = await review_itinerary(state["case_id"], state["request"], context, revision=True)
             return {"days": revised, "model_trace": trace}
         except Exception as exc:
             with SessionLocal.begin() as session:
@@ -162,13 +183,10 @@ async def _prepare_revision(state: RevisionState) -> RevisionState:
 def _save_revision(state: RevisionState) -> RevisionState:
     with SessionLocal.begin() as session:
         case = session.get(Case, state["case_id"], with_for_update=True)
-        previous = case.guide_state or {}
-        proposal = {"id": state["proposal_id"], "request": state["request"],
-                    "status": "PENDING", "days": state["days"],
-                    "scope": "ILLUSTRATIVE_ONLY", "model_trace": state.get("model_trace")}
-        case.guide_state = {**previous, "proposal": proposal}
+        case_state.propose(session, case.id, state["proposal_id"], state["request"], state["days"],
+                           state.get("model_trace"))
         add_event(session, case.id, "Travel Guide", "ITINERARY_REVISION_PROPOSED", case.status,
-                  {"proposal_id": proposal["id"], "scope": proposal["scope"]})
+                  {"proposal_id": state["proposal_id"], "scope": "ILLUSTRATIVE_ONLY"})
     return {}
 
 
@@ -193,22 +211,23 @@ def confirm_revision(case_id: str, proposal_id: str, accept: bool) -> dict:
         case = session.get(Case, case_id, with_for_update=True)
         if not case:
             raise LookupError("Case not found")
-        state = case.guide_state or {}
-        proposal = state.get("proposal")
-        if not proposal or proposal["id"] != proposal_id or proposal["status"] != "PENDING":
+        proposal = session.get(ItineraryProposal, proposal_id, with_for_update=True)
+        if not proposal or proposal.case_id != case_id or proposal.status != "PENDING":
             raise ValueError("There is no pending proposal with this ID")
-        updated = {**proposal, "status": "ACCEPTED" if accept else "DECLINED"}
-        next_version = int(state.get("itinerary_version", 1)) + (1 if accept else 0)
-        history = list(state.get("itinerary_history", []))
+        proposal.status = "ACCEPTED" if accept else "DECLINED"
+        proposal.decided_at = datetime.now(timezone.utc)
         if accept:
-            history.append({"version": next_version, "proposal_id": proposal_id,
-                            "days": proposal["days"], "source": "GEMINI_REVIEWED" if proposal.get("model_trace") else "DETERMINISTIC_DRAFT"})
-        case.guide_state = {**state, "proposal": updated,
-                            **({"accepted_days": proposal["days"], "itinerary_version": next_version,
-                                "itinerary_source": "GEMINI_REVIEWED" if proposal.get("model_trace") else "DETERMINISTIC_DRAFT",
-                                "itinerary_history": history} if accept else {})}
+            if not case_state.current_itinerary(session, case_id):
+                # Version 1 is the outline the proposal revised, so history stays complete.
+                requirement = session.scalar(select(Requirement).where(Requirement.case_id == case_id))
+                case_state.add_itinerary_version(session, case_id, case_state.draft_days(
+                    requirement, case.language, case.original_request), "DETERMINISTIC_DRAFT")
+                session.flush()
+            case_state.add_itinerary_version(
+                session, case_id, proposal.days, "GEMINI_REVIEWED" if proposal.model_trace else "DETERMINISTIC_DRAFT",
+                model_trace=proposal.model_trace, proposal_id=proposal_id)
         add_event(session, case_id, "Travel Guide", "ITINERARY_REVISION_DECIDED", case.status,
-                  {"proposal_id": proposal_id, "decision": updated["status"],
+                  {"proposal_id": proposal_id, "decision": proposal.status,
                    "scope": "ILLUSTRATIVE_ONLY"})
     return guide_context(case_id)
 

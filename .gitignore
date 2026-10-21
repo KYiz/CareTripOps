@@ -10,3 +10,4 @@ backend/.pytest_cache/
 **/__pycache__/
 *.pyc
 backend/evals/*_results.json
+backups/

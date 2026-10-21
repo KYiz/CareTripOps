@@ -1,60 +1,67 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { api } from './api/client';
+import { AuthRequiredError, api } from './api/client';
+import AccountPage from './components/AccountPage';
+import AdvisorConsole from './components/AdvisorConsole';
 import Dashboard from './components/Dashboard';
-import PhoneSimulator from './components/PhoneSimulator';
 import LandingPage from './components/LandingPage';
-import type { CaseSnapshot } from './types';
+import LegalPage from './components/LegalPage';
+import LoginPanel from './components/LoginPanel';
+import PhoneSimulator from './components/PhoneSimulator';
+import TopBar from './components/TopBar';
+import TripCardPage from './components/TripCardPage';
 import TravelPhoto from './components/TravelPhoto';
 import { matchTravelImage } from './data/travelImages';
-import { resolveRoute, routeHref, type AppRoute } from './routes';
+import { useCaseSnapshot } from './hooks/useCaseSnapshot';
+import { useSession } from './hooks/useSession';
+import { StepUpCancelled, useStepUp } from './hooks/useStepUp';
+import { useTrips } from './hooks/useTrips';
+import { useI18n } from './i18n';
+import { sampleTripRequest } from './labels';
+import { PUBLIC_ROUTES, resolveRoute, routeHref, type AppRoute } from './routes';
+import type { Invitation, Order } from './types';
 
-const sampleRequest = 'Three travelers want a relaxed three-day Auckland trip. We need a lift serving all guest floors. Our total budget is NZD 1000.';
 const sampleDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-const savedCasesKey = 'caretrip:saved-case-ids';
-const lastSavedCaseKey = 'caretrip:last-saved-case';
-
-function savedCaseIds(): string[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(savedCasesKey) || '[]');
-    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
-  } catch { return []; }
-}
-
-function initialCaseId(): string {
-  const fromUrl = new URLSearchParams(location.search).get('caseId');
-  const saved = savedCaseIds();
-  if (fromUrl) {
-    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
-    return navigation?.type === 'reload' && !saved.includes(fromUrl) ? '' : fromUrl;
-  }
-  try {
-    const lastSaved = localStorage.getItem(lastSavedCaseKey) ?? '';
-    return saved.includes(lastSaved) ? lastSaved : '';
-  } catch { return ''; }
-}
+const caseIdFromUrl = () => new URLSearchParams(location.search).get('caseId') ?? '';
 
 export default function App() {
-  const [caseId, setCaseId] = useState(initialCaseId);
-  const selectedCaseId = useRef(caseId);
-  selectedCaseId.current = caseId;
+  const { t, lang } = useI18n();
+  const { user, signedIn, setUser, signOut } = useSession();
+  const { guard, dialog: stepUpDialog } = useStepUp();
+  const [route, setRoute] = useState(() => resolveRoute(location.pathname));
+  const [caseId, setCaseId] = useState(caseIdFromUrl);
+  const { snapshot, loading, error, refresh } = useCaseSnapshot(caseId, signedIn);
+  const trips = useTrips(signedIn, snapshot?.caseData.status);
   const [request, setRequest] = useState('');
   const [demoDate, setDemoDate] = useState(sampleDate);
-  const [snapshot, setSnapshot] = useState<CaseSnapshot | null>(null);
-  const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
-  const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [tripIds, setTripIds] = useState(savedCaseIds);
-  const [tripSummaries, setTripSummaries] = useState<{ id: string; destination: string; status: string }[]>([]);
-  const [tripListError, setTripListError] = useState(false);
-  const [tripListLoading, setTripListLoading] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState<boolean | null>(null);
-  const [route, setRoute] = useState(() => resolveRoute(location.pathname));
-  const terminal = snapshot && ['DEMO_COMPLETED', 'REJECTED', 'HUMAN_REVIEW', 'FAILED'].includes(snapshot.caseData.status);
-  const pollMs = terminal ? 10000 : 1500;
+  // A trip the visitor asked to plan before signing in; created right after sign-in.
+  const [pendingCreate, setPendingCreate] = useState<{ request: string; voice: boolean } | null>(null);
   const link = (path: AppRoute) => routeHref(path, caseId);
-  const caseSaved = Boolean(caseId && tripIds.includes(caseId));
+  const failure = (cause: unknown, fallback: string) => {
+    if (!(cause instanceof AuthRequiredError || cause instanceof StepUpCancelled)) setActionError(cause instanceof Error ? cause.message : t(fallback));
+  };
+
+  useEffect(() => {
+    fetch('/api/guide/capabilities').then(response => response.ok ? response.json() : null)
+      .then(body => setVoiceAvailable(Boolean(body?.data?.voice_available))).catch(() => setVoiceAvailable(false));
+    const onHistory = () => { setCaseId(caseIdFromUrl()); setRoute(resolveRoute(location.pathname)); };
+    window.addEventListener('popstate', onHistory);
+    return () => window.removeEventListener('popstate', onHistory);
+  }, []);
+
+  // Keep ?caseId= in the address bar in step with the selected trip.
+  useEffect(() => {
+    const url = new URL(location.href);
+    if (!caseId && url.searchParams.has('caseId')) {
+      url.searchParams.delete('caseId'); url.searchParams.delete('voice');
+      history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    } else if (caseId && route && route !== '/' && !url.searchParams.has('caseId')) {
+      history.replaceState(null, '', link(route));
+    }
+  }, [caseId, route]);
 
   function navigate(event: MouseEvent<HTMLAnchorElement>, path: AppRoute) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -65,172 +72,106 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
 
-  useEffect(() => {
-    fetch('/api/guide/capabilities').then(response => response.ok ? response.json() : null)
-      .then(body => setVoiceAvailable(Boolean(body?.data?.voice_available)))
-      .catch(() => setVoiceAvailable(false));
-  }, []);
-
-  useEffect(() => {
-    const onHistory = () => {
-      const id = new URLSearchParams(location.search).get('caseId') || '';
-      if (id !== selectedCaseId.current) { selectedCaseId.current = id; setSnapshot(null); setCaseId(id); }
-      setRoute(resolveRoute(location.pathname));
-    };
-    window.addEventListener('popstate', onHistory);
-    return () => window.removeEventListener('popstate', onHistory);
-  }, []);
-
-  useEffect(() => {
-    if (!caseId) {
-      const url = new URL(location.href);
-      if (url.searchParams.has('caseId')) {
-        url.searchParams.delete('caseId');
-        url.searchParams.delete('voice');
-        history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-      }
-      return;
-    }
-    if (route && route !== '/' && !new URLSearchParams(location.search).has('caseId')) {
-      history.replaceState(null, '', link(route));
-    }
-  }, [caseId, route]);
-
-  useEffect(() => {
-    if (!tripIds.length) { setTripSummaries([]); setTripListError(false); setTripListLoading(false); return; }
-    let active = true;
-    setTripListLoading(true);
-    void Promise.all(tripIds.map(async id => {
-      try {
-        const item = await api.caseData(id);
-        return { id, destination: item.requirements?.destination || 'Trip in progress', status: item.status };
-      } catch { return null; }
-    })).then(items => { if (active) {
-      setTripListError(items.some(item => item === null));
-      setTripSummaries(items.filter((item): item is NonNullable<typeof item> => item !== null));
-      setTripListLoading(false);
-    } });
-    return () => { active = false; };
-  }, [tripIds, snapshot?.caseData.status]);
-
-  const refresh = useCallback(async () => {
-    if (!caseId) return;
-    try {
-      const next = await api.snapshot(caseId);
-      if (selectedCaseId.current !== caseId) return;
-      setSnapshot(next);
-      setError('');
-    } catch (cause) {
-      if (selectedCaseId.current !== caseId) return;
-      setError(cause instanceof Error ? cause.message : 'Unable to load case');
-    }
-  }, [caseId]);
-
-  useEffect(() => {
-    if (!caseId) return;
-    setLoading(true);
-    void refresh().finally(() => setLoading(false));
-    const timer = setInterval(() => void refresh(), pollMs);
-    return () => clearInterval(timer);
-  }, [caseId, refresh, pollMs]);
-
-  async function createCase(requestOverride?: string, voiceStart = false) {
-    if (mutating) return;
-    setMutating(true);
+  function openCase(id: string, path = location.pathname) {
     setActionError('');
-    try {
-      const created = await api.createCase(requestOverride ?? request, demoDate, voiceStart);
-      if (route === '/') {
-        history.pushState(null, '', `${routeHref('/mobile', created.case_id)}${voiceStart ? '&voice=1' : ''}`);
-        setRoute('/mobile');
-      } else {
-        history.replaceState(null, '', `${location.pathname}?caseId=${encodeURIComponent(created.case_id)}${voiceStart ? '&voice=1' : ''}`);
-      }
-      selectedCaseId.current = created.case_id;
-      setSnapshot(null);
-      setCaseId(created.case_id);
-    } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : 'Case creation failed');
-    } finally { setMutating(false); }
-  }
-
-  function saveCase() {
-    if (!caseId || caseSaved) return;
-    const nextIds = [caseId, ...tripIds];
-    try {
-      localStorage.setItem(savedCasesKey, JSON.stringify(nextIds));
-      localStorage.setItem(lastSavedCaseKey, caseId);
-      setTripIds(nextIds);
-      setActionError('');
-    } catch { setActionError('This browser could not save the trip for your next visit.'); }
-  }
-
-  function openCase(id: string) {
-    if (id === caseId) return;
-    selectedCaseId.current = id;
-    setSnapshot(null); setError(''); setActionError('');
-    history.pushState(null, '', `${location.pathname}?caseId=${encodeURIComponent(id)}`);
+    history.pushState(null, '', `${path}?caseId=${encodeURIComponent(id)}`);
     setCaseId(id);
   }
 
-  async function mutate(action: () => Promise<unknown>) {
+  async function createCase(requestOverride?: string, voice = false) {
     if (mutating) return;
-    setMutating(true);
-    setActionError('');
-    try { await action(); await refresh(); }
-    catch (cause) { await refresh(); setActionError(cause instanceof Error ? cause.message : 'Request failed'); }
+    const text = requestOverride ?? request;
+    if (!signedIn) { setPendingCreate({ request: text, voice }); return; }
+    setMutating(true); setActionError('');
+    try {
+      const created = await api.createCase(text, demoDate, voice);
+      const target = route === '/' ? '/mobile' : location.pathname;
+      openCase(created.case_id, target);
+      if (voice) history.replaceState(null, '', `${location.pathname}${location.search}&voice=1`);
+      setRoute(resolveRoute(target));
+    } catch (cause) { failure(cause, 'Case creation failed'); }
     finally { setMutating(false); }
   }
 
-  const dashboard = <Dashboard caseId={caseId} snapshot={snapshot} loading={loading} mutating={mutating} request={request}
-    demoDate={demoDate} setRequest={setRequest} setDemoDate={setDemoDate} createCase={createCase}
-    useSample={() => setRequest(sampleRequest)}
-    clarify={(answers) => mutate(() => api.clarify(caseId, answers))} resume={() => mutate(() => api.resume(caseId))} />;
+  useEffect(() => {
+    if (!signedIn || !pendingCreate) return;
+    setPendingCreate(null);
+    void createCase(pendingCreate.request, pendingCreate.voice);
+  }, [signedIn, pendingCreate]);
+
+  // Back from Stripe Checkout: ask the server to read the payment straight away (the webhook may lag).
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const outcome = params.get('payment');
+    if (!signedIn || !caseId || !outcome) return;
+    params.delete('payment');
+    history.replaceState(null, '', `${location.pathname}?${params}`);
+    if (outcome === 'cancelled') { setActionError(t('Payment was not completed. Your room stays held for a short while; you can pay again below.')); return; }
+    void api.syncPayment(caseId).then(refresh).catch(cause => failure(cause, 'Request failed'));
+  }, [signedIn, caseId]);
+
+  async function mutate(action: () => Promise<unknown>) {
+    if (mutating) return;
+    setMutating(true); setActionError('');
+    // Paying, cancelling and deleting may ask for a fresh code first, then run again.
+    try { await guard(action); } catch (cause) { failure(cause, 'Request failed'); }
+    finally { await refresh(); setMutating(false); }
+  }
+
+  async function answerInvitation(invitation: Invitation, accept: boolean) {
+    await mutate(() => api.answerInvitation(invitation.id, accept));
+    await trips.reload();
+    if (accept) openCase(invitation.case_id);
+  }
+
+  function goHome() { setCaseId(''); history.pushState(null, '', '/'); setRoute('/'); }
+  async function leave() { await signOut(); goHome(); }
+
+  const role = snapshot?.caseData.my_role ?? null;
+  const useSample = () => setRequest(sampleTripRequest('Auckland', lang));
+  const clarify = (answers: Record<string, string | number>) => mutate(() => api.clarify(caseId, answers));
+  const intake = { request, setRequest, demoDate, setDemoDate, createCase, useSample };
+  const dashboard = <Dashboard {...intake} caseId={caseId} snapshot={snapshot} loading={loading} mutating={mutating} role={role}
+    clarify={clarify} resume={() => mutate(() => api.resume(caseId))} />;
   const visibleError = actionError || error;
-  const phone = <PhoneSimulator caseId={caseId} snapshot={snapshot} mutating={mutating} error={visibleError}
-    trips={tripSummaries} tripListError={tripListError} tripListLoading={tripListLoading} openCase={openCase}
-    request={request} demoDate={demoDate} setRequest={setRequest} setDemoDate={setDemoDate}
-    createCase={createCase} useSample={() => setRequest(sampleRequest)}
-    voiceAvailable={voiceAvailable}
-    saved={caseSaved} saveCase={saveCase}
-    startVoicePlan={() => void createCase('I would like to plan a New Zealand trip by voice.', true)}
-    clarify={(answers) => mutate(() => api.clarify(caseId, answers))}
-    decide={(decision) => snapshot?.approval && mutate(() => api.decide(caseId, snapshot.approval!, decision))} />;
+  const phone = <PhoneSimulator {...intake} caseId={caseId} snapshot={snapshot} mutating={mutating} error={visibleError} role={role}
+    trips={trips.trips} invitations={trips.invitations} answerInvitation={answerInvitation}
+    tripListError={trips.failed} tripListLoading={trips.loading} openCase={id => openCase(id)} voiceAvailable={voiceAvailable}
+    startVoicePlan={() => void createCase('I would like to plan a New Zealand trip by voice.', true)} clarify={clarify}
+    decide={decision => snapshot?.approval && mutate(() => api.decide(caseId, snapshot.approval!, decision))}
+    cancelOrder={(order: Order) => mutate(() => api.cancelOrder(caseId, order.id))} />;
+  const privatePage = route !== null && !PUBLIC_ROUTES.includes(route);
+  const needsSignIn = user === null && (privatePage || pendingCreate !== null);
 
   return <div className={`app-shell ct-shell ct-route-${route?.slice(1) || 'home'}`}>
-    <header className="ct-topbar">
-      <a href={link('/')} onClick={event => navigate(event, '/')} className="ct-logo" aria-label="CareTrip home">C<span>✦</span></a>
-      <div className="ct-brand"><strong>CareTrip <em>Ops</em></strong><span>NEW ZEALAND · TRAVEL WITH CONFIDENCE</span></div>
-      <nav className="ct-route-nav" aria-label="Main navigation">
-        <a href={link('/')} onClick={event => navigate(event, '/')} aria-current={route === '/' ? 'page' : undefined}>Home</a>
-        <a href={link('/dashboard')} onClick={event => navigate(event, '/dashboard')} aria-current={route === '/dashboard' ? 'page' : undefined}>Dashboard</a>
-        <a href={link('/mobile')} onClick={event => navigate(event, '/mobile')} aria-current={route === '/mobile' ? 'page' : undefined}>Mobile</a>
-        <a href={link('/demo')} onClick={event => navigate(event, '/demo')} aria-current={route === '/demo' ? 'page' : undefined}>Demo</a>
-      </nav>
-      <div className="ct-header-right">
-        {caseId && <button type="button" className="ct-save-case" onClick={saveCase} disabled={caseSaved}>{caseSaved ? 'Saved on this device' : 'Save this trip'}</button>}
-        <span className="ct-mode">{!caseId ? 'No case selected' : !snapshot ? 'Case data pending' : snapshot.caseData.model_mode === 'api'
-          ? `${snapshot.caseData.llm_provider || 'Live'} ${snapshot.caseData.model_status === 'SUCCEEDED' ? 'used' : snapshot.caseData.model_status === 'FAILED' ? 'failed' : 'pending'}`
-          : 'Mock model'}</span>
-        <span className="ct-disclosure">Synthetic offers · Simulated booking</span>
-      </div>
-    </header>
+    <TopBar route={route} user={user} caseId={caseId} snapshot={snapshot} link={link} navigate={navigate} signOut={() => void leave()} />
+    {user === undefined && privatePage ? <main className="ct-auth-page"><p role="status">{t("Checking your sign-in…")}</p></main>
+      : needsSignIn ? <LoginPanel onSignedIn={next => { setUser(next); setActionError(''); }}
+        reason={pendingCreate ? t('Sign in to save and plan your trip. We will start planning right after.') : t('Sign in to see your trips.')} />
+      : <>
     {route === '/' && <LandingPage caseId={caseId} link={link} request={request} setRequest={setRequest}
       demoDate={demoDate} setDemoDate={setDemoDate} createCase={createCase} mutating={mutating} />}
-    {(route === '/dashboard' || route === '/demo') && <section className="ct-hero" aria-label="New Zealand travel">
+    {(route === '/dashboard' || route === '/demo') && <section className="ct-hero" aria-label={t("New Zealand travel")}>
       <TravelPhoto image={matchTravelImage(snapshot?.caseData.requirements?.destination)} eager caption />
       <div className="ct-hero-shade" />
-      <div className="ct-hero-copy"><p className="ct-kicker">A KINDER WAY TO TRAVEL</p>
-        <h1>Tell us where you dream of going.<br/><em>We will take care of the details.</em></h1>
-        <p>Thoughtful New Zealand travel, checked by our team and confirmed by you.</p>
-        <a href={route === '/dashboard' ? '#new-trip' : link('/mobile')} className="ct-hero-link">{route === '/dashboard' ? 'Start a new trip' : 'Open traveler view'} <span aria-hidden="true">↗</span></a>
+      <div className="ct-hero-copy"><p className="ct-kicker">{t("A KINDER WAY TO TRAVEL")}</p>
+        <h1>{t("Tell us where you dream of going.")}<br/><em>{t("We will take care of the details.")}</em></h1>
+        <p>{t("Thoughtful New Zealand travel, checked by our team and confirmed by you.")}</p>
+        <a href={route === '/dashboard' ? '#new-trip' : link('/mobile')} className="ct-hero-link">{route === '/dashboard' ? t("Start a new trip") : t("Open traveler view")} <span aria-hidden="true">↗</span></a>
       </div>
-      {caseId && <div className="ct-case-chip">CASE <strong>{caseId.slice(0, 8).toUpperCase()}</strong></div>}
+      {caseId && <div className="ct-case-chip">{t("CASE")} <strong>{caseId.slice(0, 8).toUpperCase()}</strong></div>}
     </section>}
-    {visibleError && <div className="error-banner ct-error" role="alert">{visibleError} {caseId && <button type="button" onClick={() => void refresh()}>Retry loading</button>}</div>}
+    {visibleError && <div className="error-banner ct-error" role="alert">{visibleError} {caseId && <button type="button" onClick={() => void refresh()}>{t("Retry loading")}</button>}</div>}
     {route === '/dashboard' && <main className="ct-dashboard-page">{dashboard}</main>}
-    {route === '/mobile' && <main className="ct-mobile-page"><div className="ct-mobile-intro"><p className="ct-kicker">CARETRIP COMPANION</p><h1>Your trip, made simple.</h1><p>Plan and review your New Zealand journey in this browser-based phone view.</p></div>{phone}</main>}
+    {route === '/mobile' && <main className="ct-mobile-page"><div className="ct-mobile-intro"><p className="ct-kicker">{t("CARETRIP COMPANION")}</p><h1>{t("Your trip, made simple.")}</h1><p>{t("Plan and review your New Zealand journey in this browser-based phone view.")}</p></div>{phone}</main>}
     {route === '/demo' && <main className="ct-workspace">{dashboard}{phone}</main>}
-    {route === null && <main className="ct-not-found"><h1>Page not found</h1><p>This CareTrip page is not available.</p><a href={link('/')}>Return home</a></main>}
+    {route === '/advisor' && (user?.is_advisor ? <AdvisorConsole /> : <main className="ct-not-found"><h1>{t('Advisors only')}</h1><p>{t('This page is for CareTrip travel advisors.')}</p></main>)}
+    {route === '/account' && user && <AccountPage user={user} onUserChange={setUser} guard={guard}
+      onDeleted={() => { setUser(null); goHome(); }} />}
+    {route === '/trip-card' && <TripCardPage caseId={caseId} />}
+    {(route === '/terms' || route === '/privacy') && <LegalPage kind={route === '/terms' ? 'terms' : 'privacy'} />}
+    {route === null && <main className="ct-not-found"><h1>{t("Page not found")}</h1><p>{t("This CareTrip page is not available.")}</p><a href={link('/')}>{t("Return home")}</a></main>}
+    </>}
+    {stepUpDialog}
   </div>;
 }

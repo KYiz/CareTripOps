@@ -1,19 +1,39 @@
-# Executable Skill Contracts
+# Skill contracts
 
-These Skills are Python functions, not autonomous agents. The Manager's StateGraph routes worker nodes that call them. PostgreSQL services own business transactions; source facts in this PoC are synthetic.
+Skills are typed Python functions, not autonomous agents. Workflow nodes in `app/workflow/` call them; side effects
+with suppliers and payments live in `app/booking.py`. Supplier data in this build comes from the simulator.
 
-| Skill | Description and typed input/output | Preconditions and execution rules | Errors and side effects | Idempotency and tests |
+| Skill | Input → output | Rules | Side effects and replay | Tests |
 |---|---|---|---|---|
-| `extract_requirements` | Parse a text request and explicit date. `RequirementInput → RequirementOutput`, including canonical destination, scope, attractions, and pace. | The input must have at least eight characters. Never infer an absent currency or date. Supported destination aliases are in `destinations.py`. Known requests outside New Zealand terminate before supplier discovery. API mode calls the configured Gemini SDK or OpenAI LangChain adapter; mock mode uses a deterministic parser. | Pydantic validation errors; live provider errors go to human review with an audit event. No direct DB write; the Requirements Worker persists the result. | Worker checks for an existing requirement row before extraction. `test_requirement_schema_and_extraction`, destination and foreign-scope unit tests. |
-| `validate_requirements` | Return missing or unsupported field names. `RequirementOutput → list[str]`. | Date, destination, travelers, days, budget, and NZD currency are required before discovery. | No side effects. Unsupported currency requires clarification. | Pure function. `test_missing_fields_never_filled_silently`, `test_budget_and_currency_guard`. |
-| `search_suppliers` | Read the synthetic Auckland catalog. `RequirementOutput → list[OfferData]`. | Requirements must be complete. The P0 fixture serves exactly three travelers and three days. | Raises `ValueError` for incomplete requirements. The worker creates immutable offer snapshots once per case/product/version. | Unique snapshot key prevents duplicate rows. `test_supplier_comparison_and_rerank`, integration `test_conflict_rerank_approval_and_idempotent_booking`. |
-| `compare_offers` | Filter by same-currency budget and sort by amount. `RankingInput → RankingOutput`. | No foreign-exchange inference. Preliminary ranking carries no verified claim. | Pure function; worker adds a ranking audit event. | Pure function. `test_supplier_comparison_and_rerank`, `test_budget_and_currency_guard`. |
-| `verify_evidence` | Evaluate synthetic source polarity and strength. `product_id, elevator_required → (list[EvidenceData], AssessmentData)`. | CONTRADICT blocks an accessibility-hard candidate; missing coverage yields REVIEW; only strong support yields PASS. | Unknown products raise `KeyError`. Worker persists source records separately from the aggregate assessment. | Existing assessment prevents duplicate source writes on replay. `test_evidence_conflict_review_and_pass`, integration conflict test. |
-| `rerank_offers` | Remove BLOCK/REVIEW and excluded candidates from price order. `RankingInput, verdicts → RankingOutput`. | Manager permits at most one rerank. The alternative must pass a fresh Evidence Worker evaluation. | Pure function; Manager records exclusions and rerank count. | Pure function. `test_supplier_comparison_and_rerank`, integration conflict test. |
-| `prepare_approval` | Persist an approval for a final PASS snapshot. `ApprovalInput → Approval`. | Case must be OFFERS_VERIFIED; offer ownership, version, amount, currency, expiry and PASS assessment must match. Called before a side-effect-free graph interrupt. | Raises `ValueError` on mismatch; writes one PENDING approval and audit event in a transaction. | Returns existing matching PENDING row; partial unique index permits one pending approval per case. Integration approval test. |
-| `execute_mock_booking` | Commit/read back a simulated order. `BookingInput → Order`. | Durable APPROVED decision, matched case/offer/version/amount/currency/expiry, and PASS assessment required. | Raises `ValueError` on mismatch and `RuntimeError` on failed read-back. Writes only simulated orders and audit status. | Unique key derived from approval ID plus unique approval-order relation; replay returns existing matching order. Integration duplicate test. |
-| `generate_review` | Create a factual simulation summary. `ReviewInput → ReviewOutput`. | Worker calls it only after committed order read-back. | Pure function; Review Worker persists completion event and terminal state. | Completion status guard avoids duplicate terminal event. `test_review_is_explicitly_simulated`, integration completion test. |
+| `extract_requirements` | `RequirementInput → RequirementOutput` | Never invents a currency or date. Destinations and attractions come from `destinations.py`; English and Chinese requests. API mode uses Gemini or OpenAI; errors go to a person, never a mock fallback. | None; the requirements node persists once per Case. | `test_skills.py` extraction, Chinese and foreign-scope tests |
+| `validate_requirements` | `RequirementOutput → list[str]` | Destination, date, travelers, days, budget and NZD are required. | Pure. | missing-field and currency tests |
+| `search_suppliers` | `RequirementOutput, SupplierProvider → list[OfferData]` | Requirements must be complete. Offers carry supplier refs, attributes (lift, step-free, bathroom, walking, rating, diets, transfers), cancellation policy and per-claim evidence. | Discovery stores immutable snapshots (DB trigger) once per Case/product/version. | `test_supplier_offers_are_priced_for_the_party_and_carry_evidence` |
+| `required_claims` | `elevator_required, needs → list[str]` | Words like "lift" need lift + step-free; a wheelchair adds the claims it needs; saved needs add step-free or bathroom. | Pure. | `test_claims_follow_the_words_and_the_saved_needs` |
+| `compare_offers` | `RankingInput → RankingOutput` | Budget and currency are hard limits; so is a walking limit of 200 m or less against a lot of walking. Score = accessibility (mean of the needed claims) 35%, price 25%, pace 15%, flexibility 15%, rating 10%, plus meals 10% with dietary needs (normalised), with a reason per factor. | Pure; the comparison node stores `offer_rankings`. | ranking tests |
+| `verify_evidence` / `assess_offer` | `list[EvidenceData], claim → AssessmentData`; `…, claims → {claim: AssessmentData}` | Per claim: any contradiction blocks; strong support passes; otherwise REVIEW. No claims needed → one PASS. The weakest claim decides the offer (`db.offer_verdict`). Advisors add later versions per claim. | Pure; discovery stores sources (URL, content hash) and version 1 of each claim. | `test_evidence_conflict_review_and_pass` |
+| `rerank_offers` | `RankingInput, verdicts → RankingOutput` | Excludes BLOCK and REVIEW verdicts. The Manager allows `MAX_RERANKS`; then an advisor review or a person. | Pure. | `test_rerank_excludes_blocked_and_unsettled_offers` |
+| `refund_percent` | `policy, departure, today → int` | The most generous rule whose `days_before` is met; 0 otherwise. | Pure. | `test_refund_follows_the_offer_policy` |
+| `prepare_approval` | `ApprovalInput → Approval` | Case OFFERS_VERIFIED; snapshot version, amount, currency, expiry and latest PASS verdict must match. | One PENDING approval per Case (partial unique index). | integration approval tests |
+| `generate_review` | `ReviewInput → ReviewOutput` | Called only after the order is CONFIRMED. | Pure; the review node sets BOOKED once. | `test_review_summarises_the_confirmed_order` |
 
-## Model budget and boundary
+Booking (`app/booking.py`): hold → authorize → book → capture, each external call keyed by our own IDs
+(`hold:`, `pay:`, `book:`, `capture:`, `cancel:`, `refund:` + order ID), so retries never double-book or double-charge.
 
-`MODEL_MODE=mock_llm` is the default in a fresh checkout. `MODEL_MODE=api` requires the key for `LLM_PROVIDER=gemini` or `openai`. Requirements failures go to human review without a silent mock success. The call counter is committed before the provider request. `MAX_LLM_CALLS_PER_CASE=7` includes Requirements, initial Planner/Reviewer, and a reviewed revision; SDK retries are limited to one attempt. Only provider-reported token counts are logged. Initial itinerary planning failure yields a separately labeled local illustrative outline (`GEMINI_FAILED`), never a claim that Gemini succeeded. Evidence, ranking, approval, booking, and business review remain deterministic.
+## Model budget
+
+`MODEL_MODE=mock_llm` is the default. In `api` mode the per-Case call counter (`MAX_LLM_CALLS_PER_CASE`, default 7) is
+committed before each provider request and covers requirements, the initial Planner/Reviewer and one reviewed revision.
+A failed itinerary call yields a labelled local outline (`GEMINI_FAILED`). If the Reviewer asks for a change but no
+call is left, the reviewed first draft is kept when it passes our deterministic checks (`revision_skipped` in the trace);
+otherwise the local outline is used. Evidence, ranking, approval, payment and booking never depend on a model.
+
+## Planner and Reviewer (`app/two_brains.py`)
+
+- Inputs: destination, pace, travelers, budget, allowed places with their source pages, the current days and the
+  traveler's mobility needs (wheelchair, walking limit, step-free; never diet, medical notes or contacts). The
+  traveler's words are passed as data, and the prompt says so.
+- Initial plans create days from the request; guide revisions (`revision=True`) adjust the current days to the
+  traveler's change request and keep the rest.
+- Every model day is validated: same day count, only allowed places, no repeats, one or two activities, and no
+  prices, durations, distances or booking claims. The rule-based outline follows the same needs (gentle days and a
+  step-free check when mobility is limited).

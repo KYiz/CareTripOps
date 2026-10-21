@@ -80,3 +80,30 @@ def resolve_attractions(request: str, destination: str | None) -> list[str]:
     text = _fold(request)
     return [name for name, aliases in ATTRACTIONS.get(destination or "", {}).items()
             if any(_contains(text, alias) for alias in aliases)]
+
+
+# Display names for generated Chinese text. Canonical English names stay the identifiers.
+PLACE_NAMES_ZH = {
+    "Auckland": "奥克兰",
+    "Queenstown": "皇后镇",
+    "Rotorua": "罗托鲁瓦",
+    "Wellington": "惠灵顿",
+    "Christchurch": "基督城",
+    "Taupō": "陶波",
+    "Auckland Harbour": "奥克兰港",
+    "Sky Tower": "天空塔",
+    "Auckland War Memorial Museum": "奥克兰战争纪念博物馆",
+    "Lake Wakatipu": "瓦卡蒂普湖",
+    "Skyline Queenstown": "皇后镇天际缆车",
+    "Lake Rotorua": "罗托鲁瓦湖",
+    "Wai-O-Tapu": "怀奥塔普地热公园",
+    "Polynesian Spa": "波利尼西亚温泉",
+    "Wellington Harbour": "惠灵顿港",
+    "Christchurch Botanic Gardens": "基督城植物园",
+    "Lake Taupō": "陶波湖",
+    "Huka Falls": "胡卡瀑布",
+}
+
+
+def local_name(name: str, language: str) -> str:
+    return PLACE_NAMES_ZH.get(name, name) if language == "zh" else name
