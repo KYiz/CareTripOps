@@ -5,6 +5,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
+COPY supplier_sim ./supplier_sim
 COPY tests ./tests
 COPY evals ./evals
 COPY pytest.ini ./

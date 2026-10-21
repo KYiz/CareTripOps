@@ -1,0 +1,178 @@
+/* Sign-in page, account chip and family sharing. Sized for older travelers: large text and targets. */
+.ct-auth-page { min-height: calc(100vh - 120px); display: grid; place-items: center; padding: 32px 16px; }
+.ct-auth-card { width: min(520px, 100%); background: #fff; border: 1px solid var(--line, #d9e4df); border-radius: 20px;
+  padding: 32px clamp(20px, 5vw, 40px); box-shadow: 0 18px 40px rgba(23, 58, 67, .08); color: var(--ink, #173a43); }
+.ct-auth-card h1 { font-family: 'Playfair Display', Georgia, serif; font-size: clamp(28px, 5vw, 36px); line-height: 1.15; margin: 6px 0 14px; }
+.ct-auth-card p { font-size: 18px; line-height: 1.5; margin: 0 0 16px; }
+.ct-auth-card label { display: block; font-size: 18px; font-weight: 700; margin: 8px 0; }
+.ct-auth-card input { width: 100%; min-height: 56px; font-size: 20px; padding: 12px 14px; border: 2px solid #9fb8b0;
+  border-radius: 12px; box-sizing: border-box; color: inherit; background: #fff; }
+.ct-auth-card input:focus-visible { outline: 3px solid #1f736c; outline-offset: 2px; border-color: #1f736c; }
+#auth-code { letter-spacing: .4em; font-variant-numeric: tabular-nums; }
+.ct-auth-primary { width: 100%; min-height: 56px; margin-top: 18px; border: 0; border-radius: 12px; background: #1f736c;
+  color: #fff; font-size: 19px; font-weight: 800; cursor: pointer; }
+.ct-auth-primary:hover:not(:disabled) { background: #185f59; }
+.ct-auth-primary:disabled { background: #8aa9a3; cursor: not-allowed; }
+.ct-auth-links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; }
+.ct-auth-links button { min-height: 44px; background: none; border: 0; padding: 0; color: #1f5f5a; font-size: 17px;
+  font-weight: 700; text-decoration: underline; cursor: pointer; }
+.ct-auth-reason { background: var(--sea, #dcece7); border-radius: 12px; padding: 12px 14px; }
+.ct-auth-error { background: #fbe9e7; color: #8a2a1d; border-radius: 12px; padding: 12px 14px; font-size: 17px; margin-bottom: 14px; }
+.ct-auth-dev { background: #fff6e5; border: 1px dashed #b77b42; border-radius: 12px; padding: 12px 14px; }
+.ct-auth-note { font-size: 16px !important; color: var(--muted, #526b68); margin-top: 22px !important; }
+.ct-account { font-size: 15px; font-weight: 700; color: var(--ink, #173a43); max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+
+.ct-family { margin-top: 22px; padding: 18px 16px; border-radius: 14px; background: #fff; border: 1px solid var(--line, #d9e4df); }
+.ct-family h3 { margin: 0 0 6px; font-size: 20px; }
+.ct-family-lead { margin: 0 0 12px; font-size: 16px; line-height: 1.45; color: var(--muted, #526b68); }
+.ct-family-notice { background: #e9f2eb; color: #225b52; border-radius: 10px; padding: 10px 12px; font-size: 16px; margin-bottom: 10px; }
+.ct-family-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.ct-family-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--line, #d9e4df); }
+.ct-family-list li > div { min-width: 0; }
+.ct-family-list strong { display: block; font-size: 16px; overflow-wrap: anywhere; }
+.ct-family-list small { font-size: 15px; color: var(--muted, #526b68); }
+.ct-family-list li.is-pending strong { font-style: italic; }
+.ct-family-list button { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid #b8cec3; background: #fff;
+  color: #285d58; font-size: 15px; font-weight: 700; flex-shrink: 0; }
+.ct-family-invite label { display: block; font-size: 16px; font-weight: 700; margin: 14px 0 6px; }
+.ct-family-invite input[type="email"] { width: 100%; min-height: 50px; font-size: 17px; padding: 10px 12px; border: 2px solid #9fb8b0;
+  border-radius: 10px; box-sizing: border-box; }
+.ct-family-invite fieldset { border: 0; padding: 0; margin: 12px 0 0; }
+.ct-family-invite legend { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.ct-family-role { display: flex !important; gap: 10px; align-items: flex-start; font-weight: 400 !important; padding: 10px;
+  border: 1px solid var(--line, #d9e4df); border-radius: 10px; margin: 8px 0 !important; cursor: pointer; }
+.ct-family-role input { width: 22px; height: 22px; margin-top: 2px; flex-shrink: 0; }
+.ct-family-role strong { display: block; font-size: 16px; }
+.ct-family-role small { font-size: 15px; color: var(--muted, #526b68); }
+.ct-invitations h3 { font-size: 19px; margin: 8px 0 0; }
+
+/* Booking: features, reasons, refund rules, payment and cancellation. */
+.ct-features { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 6px; }
+.ct-feature { display: flex; gap: 10px; align-items: baseline; font-size: 16px; }
+.ct-feature > span { width: 24px; height: 24px; flex-shrink: 0; display: inline-grid; place-items: center; border-radius: 50%; font-weight: 800; }
+.ct-feature.is-yes > span { background: #dcefe4; color: #1b5e3f; }
+.ct-feature.is-no > span { background: #f8e1dc; color: #8a2a1d; }
+.ct-feature.is-unknown > span { background: #f3ead8; color: #6b4a14; }
+.ct-feature small { color: #4f665e; font-size: 15px; }
+.ct-why, .ct-policy { margin: 12px 0; padding: 12px 14px; border-radius: 12px; background: #f3f7f2; font-size: 16px; }
+.ct-why ul, .ct-policy ul { margin: 6px 0 0; padding-left: 20px; }
+.ct-why li, .ct-policy li { margin: 4px 0; line-height: 1.45; }
+.ct-pay-link { text-decoration: none; }
+.ct-simulated { font-size: 15px; color: #6b4a14; background: #fff6e5; border-radius: 8px; padding: 6px 10px; }
+.ct-cancel-confirm { margin-top: 14px; padding: 14px; border-radius: 12px; background: #fff; border: 2px solid #c98f7f; text-align: left; }
+.ct-danger { background: #9c3b29 !important; }
+.ct-danger:hover:not(:disabled) { background: #7f2f20 !important; }
+
+/* Advisor queue. */
+.ct-advisor-page { max-width: 880px; margin: 24px auto 60px; padding: 0 16px; color: var(--ink, #173a43); }
+.ct-advisor-page h1 { font-family: 'Playfair Display', Georgia, serif; font-size: clamp(28px, 4vw, 38px); margin: 4px 0 8px; }
+.ct-advisor-lead, .ct-advisor-empty { font-size: 17px; line-height: 1.5; color: #4f665e; }
+.ct-review-card { background: #fff; border: 1px solid var(--line, #d9e4df); border-radius: 16px; padding: 18px 20px; margin: 16px 0; }
+.ct-review-card header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; }
+.ct-review-card h2 { font-size: 21px; margin: 0; }
+.ct-review-card header span { font-size: 15px; color: #4f665e; }
+.ct-review-card p, .ct-review-evidence li { font-size: 16px; line-height: 1.5; }
+.ct-review-evidence { padding-left: 20px; }
+.ct-review-card label { display: block; font-weight: 700; font-size: 16px; margin: 12px 0 6px; }
+.ct-review-card textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 10px; border: 2px solid #9fb8b0; border-radius: 10px; }
+.ct-review-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ct-review-actions button { width: auto; flex: 1 1 220px; margin-top: 12px; }
+
+/* Confirmation dialog. */
+.ct-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
+  background: rgba(16, 38, 44, .55); overflow-y: auto; }
+.ct-modal { max-height: calc(100vh - 32px); overflow-y: auto; }
+.ct-terms { margin: 16px 0 0; padding: 14px; border-radius: 12px; background: #f3f7f2; border: 1px solid var(--line, #d9e4df); }
+.ct-terms p { margin: 0 0 8px !important; font-size: 17px !important; }
+.ct-auth-card .ct-terms-check { display: flex; gap: 12px; align-items: flex-start; font-weight: 400; font-size: 17px; line-height: 1.45; margin: 0; cursor: pointer; }
+.ct-auth-card .ct-terms-check input { width: 26px; height: 26px; min-height: 0; flex-shrink: 0; margin: 0; padding: 0; }
+.ct-auth-card a { color: #1f5f5a; font-weight: 700; }
+
+/* Account, travel needs and legal pages. */
+.ct-account-page { max-width: 760px; margin: 24px auto 60px; padding: 0 16px; color: var(--ink, #173a43); }
+.ct-account-page h1 { font-family: 'Playfair Display', Georgia, serif; font-size: clamp(28px, 4vw, 38px); margin: 4px 0 16px; }
+.ct-account-section { background: #fff; border: 1px solid var(--line, #d9e4df); border-radius: 16px; padding: 20px clamp(16px, 4vw, 26px); margin: 18px 0; }
+.ct-account-section h2 { font-size: 23px; margin: 0 0 8px; }
+.ct-account-section p { font-size: 17px; line-height: 1.5; }
+.ct-account-lead { color: #4f665e; }
+.ct-account-danger { border-color: #e3b8ad; }
+.ct-needs label:not(.ct-check) { display: block; font-size: 17px; font-weight: 700; margin: 16px 0 6px; }
+.ct-needs input:not([type="checkbox"]), .ct-needs select, .ct-needs textarea { width: 100%; min-height: 50px; box-sizing: border-box;
+  font: inherit; font-size: 17px; padding: 10px 12px; border: 2px solid #9fb8b0; border-radius: 10px; background: #fff; color: inherit; }
+.ct-needs textarea { min-height: 90px; }
+.ct-needs small { display: block; margin-top: 6px; font-size: 15px; color: #4f665e; }
+.ct-needs fieldset { border: 0; padding: 0; margin: 18px 0 0; }
+.ct-needs legend { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+.ct-check { display: flex; gap: 12px; align-items: center; min-height: 44px; font-size: 17px; cursor: pointer; margin: 6px 0; }
+.ct-check input { width: 24px; height: 24px; flex-shrink: 0; margin: 0; }
+.ct-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 16px; }
+.ct-link-button { display: block; min-height: 44px; margin-top: 12px; background: none; border: 0; padding: 0; color: #8a2a1d;
+  font-size: 16px; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.ct-legal section { margin: 22px 0; }
+.ct-legal h2 { font-size: 22px; margin: 0 0 8px; }
+.ct-legal p { font-size: 17px; line-height: 1.6; margin: 0 0 10px; }
+.ct-legal-updated { color: #4f665e; }
+.ct-legal-template { background: #fff6e5; border: 1px dashed #b77b42; border-radius: 12px; padding: 12px 14px; color: #5e3f12; }
+.ct-need-chip { background: #e8f0f7 !important; color: #1d4566 !important; }
+
+/* Help tab and the large-print trip card. */
+.ct-emergency { margin: 14px 0; padding: 14px; border-radius: 14px; background: #fbe9e7; color: #6e2216; }
+.ct-emergency strong { font-size: 19px; }
+.ct-emergency p { margin: 4px 0 10px; }
+.ct-emergency a { display: block; text-align: center; text-decoration: none; }
+.ct-help-request { margin: 14px 0; padding: 14px; border-radius: 14px; background: #fff; border: 1px solid var(--line, #d9e4df); }
+.ct-help-request h3 { margin: 0 0 6px; font-size: 19px; }
+.ct-help-request label { display: block; font-weight: 700; margin: 10px 0 6px; }
+.ct-help-request textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 10px; border: 2px solid #9fb8b0; border-radius: 10px; }
+.ct-trip-card { max-width: 760px; margin: 24px auto 60px; padding: 0 16px; color: #10262c; font-size: 20px; line-height: 1.55; }
+.ct-trip-card h1 { font-family: 'Playfair Display', Georgia, serif; font-size: clamp(34px, 6vw, 46px); margin: 4px 0 6px; }
+.ct-trip-card h2 { font-size: 26px; margin: 26px 0 8px; border-bottom: 2px solid #10262c; padding-bottom: 4px; }
+.ct-trip-card h3 { font-size: 21px; margin: 14px 0 4px; }
+.ct-trip-card ul, .ct-trip-card ol { padding-left: 24px; }
+.ct-trip-card-big { font-size: 26px; font-weight: 800; }
+.ct-trip-card-lead { font-size: 22px; }
+.ct-trip-card-help { background: #fbe9e7; border-radius: 14px; padding: 4px 16px 10px; margin-top: 22px; }
+.ct-trip-card-note { font-size: 17px; color: #3d5652; }
+.ct-trip-card-actions { display: flex; justify-content: flex-end; }
+.ct-trip-card-actions .ct-auth-primary { width: auto; padding: 0 22px; }
+@media print {
+  .ct-topbar, .ct-trip-card-actions, .ct-error { display: none !important; }
+  .ct-shell { padding: 0 !important; max-width: none !important; }
+  .ct-trip-card { margin: 0; max-width: none; font-size: 16pt; }
+  .ct-trip-card-help { border: 2px solid #000; background: none; }
+}
+
+/* Advisor console. */
+.ct-advisor-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 18px; }
+.ct-advisor-tabs button { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid #b8cec3; background: #fff;
+  color: #285d58; font-size: 16px; font-weight: 700; cursor: pointer; }
+.ct-advisor-tabs button[aria-pressed="true"] { background: #1f736c; border-color: #1f736c; color: #fff; }
+.ct-advisor-heading { font-size: 24px; margin: 8px 0 4px; }
+.ct-help-card { border-color: #e3b8ad; }
+.ct-help-message { font-size: 18px !important; font-weight: 700; }
+.ct-advisor-trips { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.ct-advisor-trip { width: 100%; text-align: left; display: grid; gap: 4px; padding: 14px 16px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line, #d9e4df); background: #fff; color: inherit; font: inherit; font-size: 16px; }
+.ct-advisor-trip[aria-expanded="true"] { border-color: #1f736c; }
+.ct-advisor-flags { color: #8a2a1d; font-weight: 700; }
+.ct-advisor-detail { padding: 12px 16px 16px; border: 1px solid var(--line, #d9e4df); border-top: 0; border-radius: 0 0 12px 12px; background: #fbfcfa; }
+.ct-advisor-detail label { display: block; font-weight: 700; margin: 12px 0 6px; }
+.ct-advisor-detail textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 10px; border: 2px solid #9fb8b0; border-radius: 10px; }
+.ct-advisor-notes { padding-left: 18px; }
+.ct-advisor-notes p { margin: 0; }
+.ct-advisor-notes small { color: #4f665e; }
+.ct-advisor-profile { background: #f3f7f2; border-radius: 10px; padding: 8px 12px; }
+
+/* Guide sources and the outline editor. */
+.ct-guide-sources { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #f3f7f2; font-size: 15px; }
+.ct-guide-sources ul { margin: 6px 0 0; padding-left: 18px; }
+.ct-guide-sources a { color: #1f5f5a; font-weight: 700; overflow-wrap: anywhere; }
+.ct-guide-edit { min-height: 44px; margin: 6px 0 10px; padding: 0 14px; border-radius: 10px; border: 1px solid #b8cec3; background: #fff;
+  color: #285d58; font-size: 15px; font-weight: 700; cursor: pointer; }
+.ct-itinerary-editor fieldset { border: 1px solid var(--line, #d9e4df); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
+.ct-itinerary-editor legend { font-weight: 800; padding: 0 4px; }
+.ct-itinerary-editor label { display: block; font-size: 15px; font-weight: 700; margin: 8px 0 4px; }
+.ct-itinerary-editor input, .ct-itinerary-editor textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px;
+  padding: 8px 10px; border: 2px solid #9fb8b0; border-radius: 10px; background: #fff; }

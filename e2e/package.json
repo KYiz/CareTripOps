@@ -1,0 +1,10 @@
+{
+  "name": "caretrip-e2e",
+  "private": true,
+  "description": "Browser journeys and accessibility checks against the running Compose stack.",
+  "scripts": { "test": "playwright test" },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.0",
+    "@playwright/test": "1.48.2"
+  }
+}

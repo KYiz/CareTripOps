@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { caseAccessToken } from '../api/client';
+import { useI18n } from '../i18n';
+import { fieldLabel } from '../labels';
 
 export type VoiceState = 'Idle' | 'Connecting' | 'Listening' | 'Thinking' | 'Speaking' | 'Disconnected';
 
@@ -16,6 +17,7 @@ function pcm16(input: Float32Array, inputRate: number): ArrayBuffer {
 }
 
 export function useLiveGuide(caseId: string, onUpdate: () => void) {
+  const { t } = useI18n();
   const [available, setAvailable] = useState(false);
   const [state, setState] = useState<VoiceState>('Idle');
   const [error, setError] = useState('');
@@ -66,8 +68,6 @@ export function useLiveGuide(caseId: string, onUpdate: () => void) {
   const start = useCallback(async () => {
     if (!caseId || !available || ws.current) return;
     setError(''); setTranscript('');
-    const token = caseAccessToken(caseId);
-    if (!token) { setState('Disconnected'); setError('This trip has no saved access token in this browser. Open a trip created here.'); return; }
     const currentAttempt = ++attempt.current;
     setState('Connecting');
     try {
@@ -78,8 +78,8 @@ export function useLiveGuide(caseId: string, onUpdate: () => void) {
       outputContext.current = new AudioContext();
       await outputContext.current.resume();
       if (attempt.current !== currentAttempt) return;
-      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/cases/${encodeURIComponent(caseId)}/guide/live`,
-        [`case-token.${token}`]);
+      // The same-origin handshake carries the session cookie; the server checks the planning role.
+      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/cases/${encodeURIComponent(caseId)}/guide/live`);
       ws.current = socket;
       socket.onmessage = event => {
         const message = JSON.parse(event.data) as { event: string; data?: string; text?: string; message?: string; error?: string; saved?: boolean; remaining?: string[] };
@@ -98,24 +98,24 @@ export function useLiveGuide(caseId: string, onUpdate: () => void) {
         else if (message.event === 'audio' && message.data) { setState('Speaking'); playAudio(message.data); }
         else if (message.event === 'turn_complete') { setState('Listening'); }
         else if (message.event === 'proposal') { onUpdate(); }
-        else if (message.event === 'clarification') { if (message.error) setError(message.error); else if (message.saved) setTranscript('Trip details saved. Planning continues.'); else if (message.remaining) setTranscript(`Still needed: ${message.remaining.join(', ')}`); onUpdate(); }
-        else if (message.event === 'revision_unavailable') { setError(message.message ?? 'A revised draft is unavailable'); }
-        else if (message.event === 'error') { setError(message.message ?? 'Live voice is unavailable'); setState('Disconnected'); }
+        else if (message.event === 'clarification') { if (message.error) setError(message.error); else if (message.saved) setTranscript(t('Trip details saved. Planning continues.')); else if (message.remaining) setTranscript(t('Still needed: {fields}', { fields: message.remaining.map(field => t(fieldLabel(field))).join(t(', ')) })); onUpdate(); }
+        else if (message.event === 'revision_unavailable') { setError(message.message ?? t('A revised draft is unavailable')); }
+        else if (message.event === 'error') { setError(message.message ?? t('Live voice is unavailable')); setState('Disconnected'); }
       };
-      socket.onerror = () => { if (ws.current === socket) { setError('The voice connection could not open. Check the WebSocket proxy and the site address, then retry. The text guide remains available.'); setState('Disconnected'); } };
+      socket.onerror = () => { if (ws.current === socket) { setError(t('The voice connection could not open. Check the WebSocket proxy and the site address, then retry. The text guide remains available.')); setState('Disconnected'); } };
       socket.onclose = event => { if (ws.current === socket) { ws.current = null; processor.current?.disconnect(); processor.current = null;
         mic.current?.getTracks().forEach(track => track.stop()); mic.current = null;
         void inputContext.current?.close(); inputContext.current = null;
         void outputContext.current?.close(); outputContext.current = null;
-        if (event.code === 1008) setError('Voice access was declined for this trip or site address. Reopen the trip in this browser, then retry.');
-        else if (event.code === 1013) setError('Gemini Live is unavailable on the server right now. The text guide remains available.');
-        else setError(previous => previous || 'The voice session ended. You can retry or use the text guide.');
+        if (event.code === 1008) setError(t('Voice is not available for your role on this trip, or the voice session limit was reached.'));
+        else if (event.code === 1013) setError(t('Gemini Live is unavailable on the server right now. The text guide remains available.'));
+        else setError(previous => previous || t('The voice session ended. You can retry or use the text guide.'));
         setState('Disconnected'); } };
     } catch (cause) {
       stop(); setState('Disconnected');
-      setError(cause instanceof Error ? cause.message : 'Microphone access is unavailable');
+      setError(cause instanceof Error ? cause.message : t('Microphone access is unavailable'));
     }
-  }, [available, caseId, onUpdate, playAudio, stop]);
+  }, [available, caseId, onUpdate, playAudio, stop, t]);
 
   return { available, state, error, transcript, start, stop };
 }

@@ -31,6 +31,9 @@ class DraftPlanInput(BaseModel):
     attractions: list[str] = Field(default_factory=list)
     interest_tags: list[str] = Field(default_factory=list)
     travel_pace: Literal["RELAXED", "STANDARD"] = "STANDARD"
+    language: Literal["en", "zh"] = "en"
+    # Mobility needs from the traveler's profile (wheelchair, walking limit, step-free); never medical notes.
+    access_needs: dict = Field(default_factory=dict)
 
 
 class DraftDay(BaseModel):
@@ -46,15 +49,6 @@ class DraftDay(BaseModel):
     status: Literal["ILLUSTRATIVE_DRAFT"] = "ILLUSTRATIVE_DRAFT"
 
 
-class OfferData(BaseModel):
-    product_id: str
-    total_amount: Decimal
-    currency: Literal["NZD"] = "NZD"
-    includes: list[str]
-    claims: dict[str, bool | None]
-    expires_at: datetime
-
-
 class EvidenceData(BaseModel):
     claim_type: str
     source: str
@@ -62,6 +56,21 @@ class EvidenceData(BaseModel):
     strength: Literal["STRONG", "WEAK"]
     reference: str
     detail: str
+    url: str | None = None
+
+
+class OfferData(BaseModel):
+    product_id: str
+    total_amount: Decimal
+    currency: Literal["NZD"] = "NZD"
+    includes: list[str]
+    claims: dict[str, bool | None]
+    expires_at: datetime
+    supplier_offer_ref: str | None = None
+    name: str | None = None
+    attributes: dict = Field(default_factory=dict)
+    cancellation_policy: list[dict] = Field(default_factory=list)
+    evidence: list[EvidenceData] = Field(default_factory=list)
 
 
 class AssessmentData(BaseModel):
@@ -75,10 +84,22 @@ class RankingInput(BaseModel):
     currency: Literal["NZD"] = "NZD"
     offers: list[OfferData]
     excluded_ids: list[str] = Field(default_factory=list)
+    elevator_required: bool = False
+    travel_pace: Literal["RELAXED", "STANDARD"] = "STANDARD"
+    # The traveler's saved needs (wheelchair, step-free, bathroom, walking limit, diet); never medical notes.
+    needs: dict = Field(default_factory=dict)
+
+
+class RankedOffer(BaseModel):
+    product_id: str
+    eligible: bool
+    score: float
+    factors: list[dict]
 
 
 class RankingOutput(BaseModel):
     ordered_product_ids: list[str]
+    ranked: list[RankedOffer] = Field(default_factory=list)
 
 
 class ApprovalInput(BaseModel):
@@ -90,13 +111,6 @@ class ApprovalInput(BaseModel):
     expires_at: datetime
 
 
-class BookingInput(BaseModel):
-    case_id: str
-    approval_id: str
-    offer_id: str
-    idempotency_key: str
-
-
 class ReviewInput(BaseModel):
     case_id: str
     order_id: str
@@ -105,4 +119,4 @@ class ReviewInput(BaseModel):
 
 class ReviewOutput(BaseModel):
     summary: str
-    status: Literal["DEMO_COMPLETED"] = "DEMO_COMPLETED"
+    status: Literal["BOOKED"] = "BOOKED"

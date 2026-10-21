@@ -1,4 +1,4 @@
-from app.main import voice_origin_allowed
+from app.api.common import origin_allowed as voice_origin_allowed
 
 
 def test_voice_accepts_same_origin_development_and_lan_hosts():

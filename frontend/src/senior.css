@@ -1,0 +1,53 @@
+/* Readability and operability for older travelers (WCAG 2.1 AA as the floor). Loaded last. */
+
+/* "Larger text" scales the whole interface, keeping layouts proportional. */
+html.ct-large-text .app-shell { zoom: 1.2; }
+
+/* A clearly visible keyboard focus everywhere. */
+:focus-visible { outline: 3px solid #1f5f5a !important; outline-offset: 2px; border-radius: 4px; }
+
+/* Comfortable targets for unsteady hands (WCAG 2.5.5 target size). */
+.ct-route-nav a, .ct-phone-tabs button, .ct-style-filters button, .ct-phone-themes button,
+.ct-guide-quick button, .ct-pref, .ct-save-case, .ct-text-button, .ct-phone-example,
+.ct-destination-card button, .ct-experience-card button, .ct-journey-stop button, .ct-guide-decision button {
+  min-height: 44px;
+}
+.ct-route-nav a { display: inline-flex; align-items: center; }
+
+.ct-prefs { display: flex; gap: 6px; align-items: center; }
+.ct-pref { padding: 0 12px; border-radius: 10px; border: 1px solid #b8cec3; background: #fff; color: #1f5f5a;
+  font-size: 15px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.ct-pref[aria-pressed="true"] { background: #1f736c; color: #fff; border-color: #1f736c; }
+
+/* Body copy in the traveler views never drops below 16px. */
+.ct-phone-scroll p, .ct-phone-scroll li, .ct-landing p, .ct-guide p, .ct-guide li, .ct-auth-card p { font-size: max(16px, 1em); }
+.ct-phone-scroll small, .ct-guide small { font-size: max(14px, 1em); }
+
+/* Chinese reads poorly with the wide tracking used for English capitals. */
+html[lang^="zh"] .ct-kicker, html[lang^="zh"] .ct-phone-kicker, html[lang^="zh"] [class*="-heading"] span,
+html[lang^="zh"] .ct-summary-grid span { letter-spacing: .04em; }
+html[lang^="zh"] body { line-height: 1.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* The header carries account and display controls; give the navigation its own row before it gets tight. */
+.ct-route-nav a, .ct-brand strong, .ct-brand > span { white-space: nowrap; }
+@media (max-width: 1440px) {
+  .ct-topbar { flex-wrap: wrap; height: auto; padding: 12px 0; row-gap: 8px; }
+  .ct-route-nav { order: 3; width: 100%; margin-left: 0; }
+  .ct-header-right { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .ct-mode { display: none; }
+}
+@media (max-width: 560px) {
+  .ct-account { display: none; }
+  .ct-route-nav { justify-content: space-between; }
+  .ct-route-nav a { padding: 10px 8px; }
+}
+
+/* White hero text sits on a photo; if the photo fails to load it must still sit on a dark surface. */
+.ct-landing-hero, .ct-hero, .ct-companion-image { background-color: #1f3b40; }
+/* The "your trip" panel sits on a pale green surface; its accent text needs a darker tone there. */
+.ct-landing-entries .ct-kicker { color: #1d6966; }

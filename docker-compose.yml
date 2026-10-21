@@ -1,3 +1,48 @@
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: postgresql+psycopg://caretrip:caretrip@db:5432/caretrip
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  MODEL_MODE: ${MODEL_MODE:-mock_llm}
+  LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+  GEMINI_REQUIREMENTS_MODEL: ${GEMINI_REQUIREMENTS_MODEL:-gemini-3.8-flash}
+  MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_LIVE_MODEL: ${GEMINI_LIVE_MODEL:-gemini-3.8-live}
+  MAX_LIVE_SESSIONS_PER_CASE: ${MAX_LIVE_SESSIONS_PER_CASE:-2}
+  GEMINI_PLANNING_ENABLED: ${GEMINI_PLANNING_ENABLED:-true}
+  GEMINI_PLANNER_MODEL: ${GEMINI_PLANNER_MODEL:-gemini-3.8-flash}
+  GEMINI_REVIEWER_MODEL: ${GEMINI_REVIEWER_MODEL:-gemini-3.8-flash}
+  FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
+  DEMO_NONCE_SECRET: ${DEMO_NONCE_SECRET:-caretrip-local-demo-only}
+  AUTH_SECRET: ${AUTH_SECRET:-caretrip-local-auth-only}
+  AUTH_DEV_RETURN_CODE: ${AUTH_DEV_RETURN_CODE:-true}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
+  EMAIL_FROM: ${EMAIL_FROM:-CareTrip <no-reply@caretrip.local>}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  MAX_LLM_CALLS_PER_CASE: ${MAX_LLM_CALLS_PER_CASE:-7}
+  SUPPLIER_BASE_URL: http://supplier:9000
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  STEP_UP_MINUTES: ${STEP_UP_MINUTES:-10}
+  SUPPORT_PHONE: ${SUPPORT_PHONE:-}
+  SMS_BACKEND: ${SMS_BACKEND:-console}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  TWILIO_FROM: ${TWILIO_FROM:-}
+  SUPPLIER_API_KEY: ${SUPPLIER_API_KEY:-sim-local-key}
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-simulated}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+  ADVISOR_EMAILS: ${ADVISOR_EMAILS:-}
+  MAX_RERANKS: 1
+  MAX_CLARIFICATIONS: 2
+
 services:
   db:
     image: postgres:16.8-alpine
@@ -15,31 +60,65 @@ services:
   api:
     build: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://caretrip:caretrip@db:5432/caretrip
-      MODEL_MODE: ${MODEL_MODE:-mock_llm}
-      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
-      GEMINI_REQUIREMENTS_MODEL: ${GEMINI_REQUIREMENTS_MODEL:-gemini-3.8-flash}
-      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_LIVE_MODEL: ${GEMINI_LIVE_MODEL:-gemini-3.8-live}
-      MAX_LIVE_SESSIONS_PER_CASE: ${MAX_LIVE_SESSIONS_PER_CASE:-2}
-      GEMINI_PLANNING_ENABLED: ${GEMINI_PLANNING_ENABLED:-true}
-      GEMINI_PLANNER_MODEL: ${GEMINI_PLANNER_MODEL:-gemini-3.8-flash}
-      GEMINI_REVIEWER_MODEL: ${GEMINI_REVIEWER_MODEL:-gemini-3.8-flash}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:8080}
-      DEMO_NONCE_SECRET: ${DEMO_NONCE_SECRET:-caretrip-local-demo-only}
-      MAX_LLM_CALLS_PER_CASE: ${MAX_LLM_CALLS_PER_CASE:-7}
-      MAX_RERANKS: 1
-      MAX_CLARIFICATIONS: 2
+      <<: *app-env
+      # Workflows run in the worker service, not inside the API process.
+      EMBEDDED_WORKER: "false"
+      # The API port is not published; all traffic arrives through the web proxy.
+      TRUST_PROXY: "true"
+      CASE_CREATE_LIMIT_PER_IP_PER_HOUR: ${CASE_CREATE_LIMIT_PER_IP_PER_HOUR:-30}
+      CASE_CREATE_LIMIT_GLOBAL_PER_HOUR: ${CASE_CREATE_LIMIT_GLOBAL_PER_HOUR:-300}
+      LOGIN_CODE_LIMIT_PER_IP_PER_HOUR: ${LOGIN_CODE_LIMIT_PER_IP_PER_HOUR:-30}
+      # `docker compose exec api pytest` uses its own database, never the demo data.
+      TEST_DATABASE_URL: postgresql+psycopg://caretrip:caretrip@db:5432/caretrip_test
+      # Stripe's official API emulator, for contract tests of the Stripe integration without keys.
+      STRIPE_MOCK_URL: http://stripe-mock:12111
+      # A separate Redis database for the shared rate-limiter test.
+      TEST_REDIS_URL: redis://redis:6379/15
     depends_on:
       db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      supplier:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
       interval: 5s
       timeout: 3s
       retries: 20
+  worker:
+    build: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *app-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+    # The API applies migrations on start; the worker waits for it.
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+  supplier:
+    # Simulated travel supplier (inventory, holds, outages). Replace with a real supplier's base URL.
+    build: ./backend
+    command: ["uvicorn", "supplier_sim.app:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      SUPPLIER_API_KEY: ${SUPPLIER_API_KEY:-sim-local-key}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:9000/v1/offers?destination=Auckland&travelers=1&duration_days=1', headers={'X-Api-Key': __import__('os').environ['SUPPLIER_API_KEY']}))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  stripe-mock:
+    image: stripe/stripe-mock:v0.188.0
   web:
     build: ./frontend
     ports:
@@ -47,5 +126,22 @@ services:
     depends_on:
       api:
         condition: service_healthy
+  # Browser journeys and accessibility checks: docker compose --profile e2e run --rm e2e
+  e2e:
+    profiles: ["e2e"]
+    image: mcr.microsoft.com/playwright:v1.48.2-jammy
+    working_dir: /e2e
+    environment:
+      BASE_URL: http://web
+      CI: ${CI:-}
+      # Must also be listed in ADVISOR_EMAILS on the API for the advisor-console journey to run.
+      E2E_ADVISOR_EMAIL: ${E2E_ADVISOR_EMAIL:-}
+    volumes:
+      - ./e2e:/e2e
+      - /e2e/node_modules
+    command: sh -c "npm install --no-audit --no-fund --silent && npx playwright test"
+    depends_on:
+      web:
+        condition: service_started
 volumes:
   caretrip_pgdata:
