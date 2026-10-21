@@ -1,5 +1,7 @@
 """What the travel guide says: intent cues and replies in English and Chinese."""
 
+import re
+
 # English and Chinese (simplified and traditional) cues, checked in this order.
 ACCESS_WORDS = ("lift", "elevator", "wheelchair", "stairs", "step-free", "step free", "accessible", "bathroom", "shower",
                 "电梯", "電梯", "轮椅", "輪椅", "台阶", "台階", "楼梯", "樓梯", "无障碍", "無障礙", "卫生间", "衛生間", "淋浴")
@@ -9,6 +11,12 @@ PACKAGE_WORDS = ("hotel", "accommodation", "price", "budget", "package", "bookin
 REVISION_WORDS = ("change", "adjust", "skip", "tired", "rest", "slower", "too much", "modify",
                   "改", "调整", "調整", "跳过", "跳過", "累", "休息", "慢", "太多", "轻松", "輕鬆")
 NEXT_WORDS = ("next", "after this", "following", "下一", "接下来", "接下來", "之后", "之後")
+# "I don't want to change the hotel", "酒店不用换": the traveler is keeping something, so these words are not a
+# change request and are removed before the cues above are matched.
+NEGATED_CHANGE = re.compile(
+    r"\b(?:do\s*n[o'’]t|does\s*n[o'’]t|no\s+need\s+to|not)\s+(?:want\s+to\s+|need\s+to\s+|going\s+to\s+)?"
+    r"(?:change|switch|swap)\b(?:\s+(?:the\s+|my\s+|our\s+)?(?:hotel|accommodation|package|booking|room)s?\b)?"
+    r"|(?:酒店|住宿|套餐|房间|房間)?(?:不用|不想|不需要|不必|不要|别|別|不)[换換](?:酒店|住宿|套餐|房间|房間)?")
 
 REPLIES = {
     "en": {
@@ -77,7 +85,7 @@ def field_names(lang: str, fields: list[str]) -> str:
 
 
 def classify_intent(message: str) -> str:
-    lowered = message.casefold()
+    lowered = NEGATED_CHANGE.sub(" ", message.casefold())
     if any(word in lowered for word in ACCESS_WORDS) and not any(word in lowered for word in CHANGE_WORDS):
         return "ACCESS_QUESTION"
     if any(word in lowered for word in PACKAGE_WORDS):

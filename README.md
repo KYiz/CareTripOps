@@ -34,8 +34,10 @@ payments are **simulated** unless Stripe keys are configured. All offers and acc
 - **Ranking.** Offers are scored on accessibility (35%), price (25%), walking pace (15%), cancellation flexibility (15%)
   and rating (10%), plus meals (10%) when the traveler has dietary needs, with the reasons shown to the traveler.
 - **Payments and orders.** Stripe Checkout with a manual-capture hold: the card is captured only after the supplier
-  confirms, and released on any failure. Orders move PENDING_PAYMENT → CONFIRMED → CANCELLATION_REQUESTED → CANCELLED
-  (or FAILED). Refunds follow the cancellation policy stored in the approved offer snapshot.
+  confirms, and released on any failure. A checkout stays open for its full 31-minute window; if the supplier's hold
+  lapsed meanwhile, booking renews it once at the approved price. Orders move PENDING_PAYMENT → CONFIRMED →
+  CANCELLATION_REQUESTED → CANCELLED (or FAILED). Refunds follow the cancellation policy stored in the approved offer
+  snapshot, counting New Zealand calendar days.
 - **Trip companion.** Reminders to everyone on the trip a week and a day before departure (sent once each), a
   large-print printable trip card, and a Help button that shows 111 and tells the family and advisors at once.
 - **Notifications.** An email outbox written in the same transaction as the event; the worker sends it with retries.
@@ -65,8 +67,9 @@ flowchart LR
   PROM[Prometheus] -->|/metrics| API
 ```
 
-Compose services: `db`, `redis`, `api`, `worker`, `supplier` (simulator), `stripe-mock` (tests only), `web` (Nginx on
-port 8080), and `e2e` (Playwright, only with `--profile e2e`).
+Compose services: `db`, `redis`, `migrate` (applies migrations once, then exits; `api` and `worker` wait for it),
+`api`, `worker`, `supplier` (simulator), `stripe-mock` (tests only), `web` (Nginx on port 8080), and `e2e` (Playwright,
+only with `--profile e2e`). Migrations never run inside the API, so several API replicas can start safely.
 A partial unique index allows one queued or running job per trip. Workers heartbeat; a reaper fails runs whose worker
 disappeared and marks the trip `RECOVERY_REQUIRED` for an explicit resume. Supplier outages are retried with backoff.
 No database lock is held across a supplier or payment call; every external write carries a key derived from our IDs.
@@ -166,8 +169,8 @@ API (all JSON as `{data, request_id}` or `{error: {code, message, retryable}, re
   `POST /api/auth/step-up/request`, `/step-up/verify`; `PUT`/`DELETE /api/auth/me/phone`, `POST /api/auth/me/phone/verify`
 - Privacy: `PUT /api/auth/me/consent`, `GET`/`PUT /api/profile`, `GET /api/auth/me/export`, `DELETE /api/auth/me`
 - Trips: `GET`/`POST /api/cases`, `GET /api/cases/{id}`, `/offers`, `/evidence`, `/approvals`, `/orders`, `/events`,
-  `GET /stream` (server-sent events), `POST /clarifications`, `/resume`, `/approvals/{id}/decision`,
-  `PUT /itinerary`, `GET /trip-card`, `POST /help`
+  `GET /snapshot` (all of the above in one read), `GET /stream` (server-sent events), `POST /clarifications`,
+  `/resume`, `/approvals/{id}/decision`, `PUT /itinerary`, `GET /trip-card`, `POST /help`
 - Payments and orders: `POST /api/cases/{id}/payments/sync`, `POST /api/cases/{id}/orders/{orderId}/cancel`,
   `POST /api/payments/stripe/webhook`
 - Family: `GET /api/cases/{id}/members`, `POST /invitations` (`VIEWER`, `CO_PLANNER` or `OWNER` to hand over),
@@ -184,6 +187,9 @@ members `OWNER`. Non-members get `404`. Cross-site writes are rejected.
 
 ## Operations
 
+- **Deploys.** Run `docker compose run --rm migrate` (or `alembic upgrade head`) once before starting new API and
+  worker versions; workflow node names are part of saved checkpoints, so add nodes rather than renaming them.
+  Nginx re-resolves the API through Docker's DNS, so recreating the API never needs a web restart.
 - **Backups.** `scripts/backup.sh` writes a compressed `pg_dump` to `backups/` and keeps the newest 14.
   `scripts/restore.sh --check <dump>` restores it into a scratch database, compares row counts and drops it;
   `scripts/restore.sh <dump> <new_db>` restores for real, never over the live database. Copy dumps off the machine.
@@ -205,7 +211,7 @@ The advisor journey in `e2e` runs when `ADVISOR_EMAILS` (API) and `E2E_ADVISOR_E
 raise `LOGIN_CODE_LIMIT_PER_IP_PER_HOUR` for repeated local runs, since every test signs in from one address.
 
 Backend tests are hermetic: the supplier simulator runs in-process and payments are simulated or faked; the Stripe
-client is contract-tested against `stripe-mock` and the shared limiter against Redis. Current results: 178 backend
+client is contract-tested against `stripe-mock` and the shared limiter against Redis. Current results: 187 backend
 tests, 15 frontend tests (including a check that every UI string has a Chinese translation) and 21 browser tests
 (desktop and phone, with WCAG 2.1 AA axe checks of every page in English and Chinese) pass.
 `.github/workflows/ci.yml` runs migrations (with a downgrade/upgrade round trip), `alembic check`, all three suites,

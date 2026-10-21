@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 from supplier_sim.catalog import CATALOG, evidence_rows
 
 API_KEY = os.getenv("SUPPLIER_API_KEY", "sim-local-key")
-HOLD_MINUTES = int(os.getenv("SUPPLIER_HOLD_MINUTES", "20"))
+# Long enough to cover the 31-minute payment window; real suppliers may hold for less.
+HOLD_MINUTES = int(os.getenv("SUPPLIER_HOLD_MINUTES", "35"))
 INVENTORY_PER_DATE = int(os.getenv("SUPPLIER_INVENTORY_PER_DATE", "50"))
 REFERENCE_PARTY = Decimal(9)  # Catalogue prices are quoted for 3 travelers x 3 days.
 
@@ -162,12 +163,12 @@ class BookingRequest(BaseModel):
 @app.post("/v1/bookings", status_code=201)
 def book(body: BookingRequest, idempotency_key: str | None = Header(default=None)):
     def compute():
-        _apply_fault("book")
+        expired = _apply_fault("book") == "expired"
         with _lock:
             held = _state["holds"].get(body.hold_ref)
             if not held:
                 problem(404, "HOLD_NOT_FOUND", "Unknown hold")
-            if held["status"] != "HELD" or datetime.fromisoformat(held["expires_at"]) <= now():
+            if expired or held["status"] != "HELD" or datetime.fromisoformat(held["expires_at"]) <= now():
                 held["status"] = "EXPIRED"
                 problem(410, "HOLD_EXPIRED", "The hold expired before confirmation")
             held["status"] = "BOOKED"
@@ -203,7 +204,7 @@ def booking(booking_ref: str):
 
 class Fault(BaseModel):
     operation: str = Field(pattern="^(search|hold|book|cancel|\\*)$")
-    mode: str = Field(pattern="^(unavailable|reject|price_change|sold_out)$")
+    mode: str = Field(pattern="^(unavailable|reject|price_change|sold_out|expired)$")
     count: int = Field(default=1, ge=1, le=100)
 
 

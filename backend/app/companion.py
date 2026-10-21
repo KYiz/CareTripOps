@@ -1,23 +1,18 @@
 """During and just before the trip: departure reminders, the printable trip card, and asking for help."""
 
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
 from sqlalchemy import select
 
 from app import notify
 from app.auth import now
+from app.clock import nz_today
 from app.config import settings
 from app.db import (Case, CaseMember, HelpRequest, ItineraryVersion, Offer, Order, Requirement, SessionLocal,
                     TravelerProfile, User, add_event, latest_claims)
 from app.skills.destinations import local_name
 
-NZ = ZoneInfo("Pacific/Auckland")
 REMINDERS = {7: "TRIP_REMINDER_WEEK", 1: "TRIP_REMINDER_DAY"}
-
-
-def nz_today() -> date:
-    return datetime.now(NZ).date()
 
 
 def _place(session, case: Case) -> str:

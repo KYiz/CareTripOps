@@ -45,10 +45,14 @@ test('business errors keep the server code and message', async () => {
   assert.match(failure.message, /role/);
 });
 
-test('snapshot requests target only the selected Case', async () => {
+test('a snapshot is one request for the selected Case', async () => {
   const paths = [];
-  globalThis.fetch = async path => { paths.push(path); return respond(200, { data: null }); };
-  await api.snapshot('first');
-  assert.equal(paths.length, 6);
-  assert.ok(paths.every(path => path.startsWith('/api/cases/first')));
+  const body = { case: { case_id: 'first' }, offers: [], evidence: { sources: [], assessments: [] }, approval: null,
+    orders: [], events: [] };
+  globalThis.fetch = async path => { paths.push(path); return respond(200, { data: body }); };
+  const snapshot = await api.snapshot('first');
+  assert.deepEqual(paths, ['/api/cases/first/snapshot']);
+  assert.equal(snapshot.caseData.case_id, 'first');
+  assert.deepEqual(snapshot.offers, []);
+  assert.equal('case' in snapshot, false);
 });

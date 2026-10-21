@@ -7,16 +7,17 @@ Rules that keep money and inventory consistent:
 - A retryable outage (SupplierUnavailable) propagates so the job is retried; nothing is half-recorded.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app import jobs, notify
+from app.clock import nz_today
 from app.config import settings
 from app.db import (Approval, Case, Offer, Order, Payment, Requirement, SessionLocal, add_event, offer_verdict,
                     set_status)
-from app.payments import get_payments
+from app.payments import PAYMENT_WINDOW_MINUTES, get_payments
 from app.skills.destinations import local_name
 from app.skills.domain import refund_percent
 from app.suppliers import HoldExpired, PriceChanged, SoldOut, SupplierRejected, get_supplier
@@ -114,6 +115,7 @@ def complete_order(order_id: str) -> str:
         if order.status in {"CONFIRMED", "FAILED"}:
             return order.status
         hold_ref, booking_ref = order.supplier_hold_ref, order.supplier_booking_ref
+        offer_ref = session.get(Offer, order.offer_id).supplier_offer_ref
         payment_ref, intent_ref, amount = payment.provider_ref, payment.payment_intent_ref, Decimal(order.total_amount)
         payment_status = payment.status
     if payment_status not in {"AUTHORIZED", "CAPTURED"}:
@@ -121,11 +123,10 @@ def complete_order(order_id: str) -> str:
         return "FAILED"
     if not booking_ref:
         try:
-            booking = get_supplier().book(hold_ref, key=f"book:{order_id}")
-        except (HoldExpired, SupplierRejected) as exc:
+            booking_ref = _book(order_id, hold_ref, offer_ref, amount)
+        except (HoldExpired, PriceChanged, SoldOut, SupplierRejected) as exc:
             fail_order(order_id, exc.code)
             return "FAILED"
-        booking_ref = booking.booking_ref
         with SessionLocal.begin() as session:
             order = session.get(Order, order_id, with_for_update=True)
             order.supplier_booking_ref = booking_ref
@@ -145,6 +146,22 @@ def complete_order(order_id: str) -> str:
         notify.queue_for_members(session, case, "ORDER_CONFIRMED",
                                  _payload(case, offer, booking_ref=booking_ref, amount=money(order.total_amount)))
     return "CONFIRMED"
+
+
+def _book(order_id: str, hold_ref: str, offer_ref: str, amount: Decimal) -> str:
+    """Book the held room. If the payment arrived after the supplier's hold lapsed, hold again once at the
+    approved price; a changed price or no rooms left ends the order instead."""
+    supplier = get_supplier()
+    try:
+        return supplier.book(hold_ref, key=f"book:{order_id}").booking_ref
+    except HoldExpired:
+        renewed = supplier.hold(offer_ref, amount, key=f"rehold:{order_id}")
+        with SessionLocal.begin() as session:
+            order = session.get(Order, order_id, with_for_update=True)
+            order.supplier_hold_ref, order.supplier_hold_expires_at = renewed.hold_ref, renewed.expires_at
+            add_event(session, order.case_id, "Booking Worker", "SUPPLIER_HOLD_RENEWED",
+                      session.get(Case, order.case_id).status, {"order_id": order_id})
+        return supplier.book(renewed.hold_ref, key=f"book:{order_id}:renewed").booking_ref
 
 
 def fail_order(order_id: str, reason: str) -> None:
@@ -199,11 +216,14 @@ def sync_payment(case_id: str) -> str | None:
 
 
 def expire_stale_payments() -> list[str]:
-    """Release payments abandoned past the supplier hold, so inventory and card holds are not left open."""
+    """Release checkouts left unpaid past the payment window, so inventory and card holds are not left open.
+    The supplier hold alone does not decide: booking renews a lapsed hold if the traveler paid in time."""
+    cutoff = now() - timedelta(minutes=PAYMENT_WINDOW_MINUTES + 1)
     with SessionLocal() as session:
-        stale = session.scalars(select(Order.case_id).join(Case, Case.id == Order.case_id).where(
+        stale = session.scalars(select(Order.case_id).join(Case, Case.id == Order.case_id)
+                                .join(Payment, Payment.order_id == Order.id).where(
             Case.status == "AWAITING_PAYMENT", Order.status == "PENDING_PAYMENT",
-            Order.supplier_hold_expires_at < now())).all()
+            Payment.status == "REQUIRES_ACTION", Payment.created_at < cutoff)).all()
     expired = []
     for case_id in stale:
         status = sync_payment(case_id)
@@ -226,7 +246,8 @@ def expire_stale_payments() -> list[str]:
 
 
 def cancellation_quote(order: Order, offer: Offer, today: date | None = None) -> tuple[int, Decimal]:
-    percent = refund_percent(offer.cancellation_policy, order.departure_date, today or date.today())
+    # Deadlines count New Zealand calendar days, not the server's UTC date.
+    percent = refund_percent(offer.cancellation_policy, order.departure_date, today or nz_today())
     return percent, (Decimal(order.total_amount) * percent / 100).quantize(Decimal("0.01"))
 
 

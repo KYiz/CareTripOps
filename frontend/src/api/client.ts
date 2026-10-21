@@ -1,6 +1,7 @@
 import type {
-  Approval, AuditEvent, CaseData, CaseMembers, CaseSnapshot, CaseSummary, EvidenceData, GuideContext, GuideReply,
-  AdvisorCase, AdvisorTraveler, CaseNote, DayEdit, EmergencyContact, HelpRequest, InviteRole, Invitation, MemberRole, Offer, Order, ReviewTask, TravelerNeeds, TravelerProfile, TripCard, User,
+  AdvisorCase, AdvisorTraveler, Approval, CaseData, CaseMembers, CaseNote, CaseSnapshot, CaseSummary, DayEdit,
+  EmergencyContact, GuideContext, GuideReply, HelpRequest, Invitation, InviteRole, MemberRole, ReviewTask,
+  TravelerNeeds, TravelerProfile, TripCard, User,
 } from '../types';
 
 import { currentLanguage, translate } from '../language.ts';
@@ -122,13 +123,10 @@ export const api = {
   caseData: (caseId: string) => call<CaseData>(`/api/cases/${caseId}`),
   createCase: (request: string, demoDate: string, voiceDraft = false) =>
     call<{ case_id: string; status: string; role: MemberRole }>('/api/cases', post({ request, demo_date: demoDate, voice_draft: voiceDraft })),
+  // One request, one database read: the trip, its offers, evidence, approval, orders and audit trail.
   async snapshot(caseId: string): Promise<CaseSnapshot> {
-    const base = `/api/cases/${caseId}`;
-    const [caseData, offers, evidence, approval, orders, events] = await Promise.all([
-      call<CaseData>(base), call<Offer[]>(`${base}/offers`), call<EvidenceData>(`${base}/evidence`),
-      call<Approval | null>(`${base}/approvals`), call<Order[]>(`${base}/orders`), call<AuditEvent[]>(`${base}/events`),
-    ]);
-    return { caseData, offers, evidence, approval, orders, events };
+    const { case: caseData, ...rest } = await call<Omit<CaseSnapshot, 'caseData'> & { case: CaseData }>(`/api/cases/${caseId}/snapshot`);
+    return { caseData, ...rest };
   },
   clarify: (caseId: string, answers: Record<string, string | number>) => call(`/api/cases/${caseId}/clarifications`, post({ answers })),
   decide: (caseId: string, approval: Approval, decision: 'APPROVE' | 'REJECT') => call(`/api/cases/${caseId}/approvals/${approval.approval_id}/decision`,

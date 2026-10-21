@@ -9,4 +9,5 @@ COPY supplier_sim ./supplier_sim
 COPY tests ./tests
 COPY evals ./evals
 COPY pytest.ini ./
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+# Migrations run separately (the Compose `migrate` service), so any number of API replicas can start safely.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

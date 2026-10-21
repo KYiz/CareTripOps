@@ -40,11 +40,15 @@ def _order_payload(session, order: Order, is_owner: bool) -> dict:
         "created_at": iso(order.created_at)}
 
 
+def orders_view(session, case_id: str, is_owner: bool) -> list[dict]:
+    rows = session.scalars(select(Order).where(Order.case_id == case_id).order_by(Order.created_at)).all()
+    return [_order_payload(session, row, is_owner) for row in rows]
+
+
 @router.get("/api/cases/{case_id}/orders")
 def orders(case_id: str, access: CaseAccess = Depends(case_role("VIEWER"))):
     with SessionLocal() as session:
-        rows = session.scalars(select(Order).where(Order.case_id == case_id).order_by(Order.created_at)).all()
-        return envelope([_order_payload(session, row, access.is_owner) for row in rows])
+        return envelope(orders_view(session, case_id, access.is_owner))
 
 
 @router.post("/api/cases/{case_id}/orders/{order_id}/cancel")
